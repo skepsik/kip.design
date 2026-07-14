@@ -1,0 +1,58 @@
+name: Deploy wiki
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Resolve wiki slug
+        run: |
+          SLUG=$(node -pe "JSON.parse(require('fs').readFileSync('.wiki.json','utf8')).slug")
+          echo "WIKI_SLUG=$SLUG" >> "$GITHUB_ENV"
+
+      - name: Build VitePress
+        run: npm ci && npm run docs:build
+
+      - name: Pack static site
+        run: tar -C .vitepress/dist -czf wiki-dist.tar.gz .
+
+      - name: Upload bundle
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT }}
+          source: wiki-dist.tar.gz
+          target: /tmp/
+
+      - name: Install on VPS
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT }}
+          script: |
+            set -e
+            SLUG="${{ env.WIKI_SLUG }}"
+            WIKI_ROOT="${{ secrets.VPS_WIKI_PATH }}"
+            WIKI_ROOT="${WIKI_ROOT:-$HOME/${SLUG}-wiki/www}"
+            mkdir -p "$WIKI_ROOT"
+            find "$WIKI_ROOT" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+            tar -xzf /tmp/wiki-dist.tar.gz -C "$WIKI_ROOT"
+            rm -f /tmp/wiki-dist.tar.gz
+            chmod -R a+rX "$WIKI_ROOT"

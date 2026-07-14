@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -eu
+root="$(git rev-parse --show-toplevel)"
+exec "$root/scripts/zip-content.sh"

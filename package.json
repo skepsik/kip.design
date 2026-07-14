@@ -1,0 +1,15 @@
+{
+  "name": "wiki-kit",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
+    "docs:dev": "vitepress dev",
+    "docs:build": "vitepress build",
+    "docs:preview": "vitepress preview --port 4173",
+    "zip:content": "sh scripts/zip-content.sh"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.3"
+  }
+}

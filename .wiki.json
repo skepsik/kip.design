@@ -1,0 +1,7 @@
+{
+  "slug": "kip",
+  "title": "Secrets Vault design",
+  "description": "Канонический design шифрованного хранилища секретов поверх git",
+  "lang": "ru-RU",
+  "github": "https://github.com/skepsik/kip.design"
+}
