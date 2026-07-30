@@ -40,7 +40,7 @@ secrets-vault/
     vault-git/            # git subprocess: delta, commit-one, cat-file
     vault-crypto/           # gpg subprocess: seal/unseal meta и body
     vault-runtime/        # склейка: Table, unfold/fold/pack orchestration
-    vault-cli/            # clap: init, unfold, pack, fold, sync, …
+    vault-cli/            # clap; бинарь `kip` (`kip init`, …)
   tests/
     integration/          # happy-path, два устройства (опционально e2e)
 ```
@@ -226,8 +226,8 @@ pub fn materialize_paths(table: &GraphTable) -> HashMap<PathBuf, MaterializeOp>;
 | vault-runtime | все выше                                           |
 | vault-cli     | clap, vault-runtime                                |
 
-**Намеренно без** `git2`, `sequoia` на MVP — только subprocess, как в дизайне «gpg +
-git как есть». Меньше FFI-поверхности для непроверяемого кода.
+**Намеренно без** `git2`, `sequoia` на MVP — только subprocess (дефолтный адаптер упаковщика +
+git как есть). Меньше FFI-поверхности для непроверяемого кода.
 
 ---
 
@@ -235,14 +235,14 @@ git как есть». Меньше FFI-поверхности для непро
 
 Чеклист; трекер не обязателен.
 
-- [ ] **P0** Workspace, `vault-ports`, `MetaV1`, пустой `vault-domain`
-- [ ] **P1** `GraphTable`, apply delta (2 pass), `validate_graph`, merge rules — **in-memory fake store**
-- [ ] **P1** Property-тест сходимости (главный критерий готовности домена)
-- [ ] **P1** Счётчик распаковок в fake crypto — регресс move-dir O(1)
-- [ ] **P2** `vault-store` + `vault-git` на tempfile-репозитории; повтор property-теста
-- [ ] **P3** `vault-crypto` (gpg); интеграция seal/unseal
-- [ ] **P4** `vault-cli`: init, unfold, pack, fold, push, fsck
-- [ ] **P5** history / restore, sync, конфликтные копии в RAM
+- [ ] **P1** Workspace, `vault-ports`, `MetaV1`, пустой `vault-domain`
+- [ ] **P2** `GraphTable`, apply delta (2 pass), `validate_graph`, merge rules — **in-memory fake store**
+- [ ] **P2** Property-тест сходимости (главный критерий готовности домена)
+- [ ] **P2** Счётчик распаковок в fake crypto — регресс move-dir O(1)
+- [ ] **P3** `vault-store` + `vault-git` на tempfile-репозитории; повтор property-теста
+- [ ] **P4** `vault-crypto` (gpg); интеграция seal/unseal
+- [ ] **P5** `vault-cli`: init, unfold, pack, fold, push, fsck
+- [ ] **P6** history / restore, sync, конфликтные копии в RAM
 
 ---
 
@@ -251,7 +251,7 @@ git как есть». Меньше FFI-поверхности для непро
 При приёме работы (человеком или агентом) смотреть не стиль, а:
 
 1. **`vault-domain` не импортирует** `std::process`, `std::fs` (кроме тестов).
-2. **Property-тест P1 зелёный** после любого изменения домена.
+2. **Property-тест P2 зелёный** после любого изменения домена.
 3. **Нет ручного `git commit`** вне `GitHistory::commit_one`.
 4. **Восстановительные операции** — байты из истории, не re-seal (implementation §1.2).
 5. **UX:** pack/fold/sync поведение совпадает с [ux](./ux.md).

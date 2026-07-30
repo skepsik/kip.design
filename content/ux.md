@@ -103,19 +103,19 @@ RAM-дерево — **вне** репозитория (tmpfs), например
 
 | Команда | Назначение |
 |---------|------------|
-| `vault init <путь>` | Git-репо, `vault-id`, слот, `.vault/`, `.gitignore` |
-| `vault unfold <путь>` | Pull (если есть remote) → дельта → unlock → RAM + таблица |
-| `vault pack` | Скан RAM → упаковка → **автокоммиты**; RAM **остаётся** |
-| `vault fold` | **`pack`** + снять RAM-дерево |
-| `vault sync` | Pull → обновить объекты и RAM → `pack`; опц. `--push` |
-| `vault passwd` | Смена фразы; purge старого слота из истории |
-| `vault purge <путь>` | Вычистить историю тел узла (нератируемый секрет; design §5.2а) |
-| `vault fsck <путь>` | Сверка таблицы, объектов, слота, инвариантов графа |
-| `vault history <путь>` | Ревизии тела секрета |
-| `vault restore <путь>@<rev>` | Подмена файла в RAM из истории; фиксация — `pack`/`fold` |
+| `kip init <путь>` | Git-репо, `vault-id`, слот, `.vault/`, `.gitignore` |
+| `kip unfold <путь>` | Pull (если есть remote) → дельта → unlock → RAM + таблица |
+| `kip pack` | Скан RAM → упаковка → **автокоммиты**; RAM **остаётся** |
+| `kip fold` | **`pack`** + снять RAM-дерево |
+| `kip sync` | Pull → обновить объекты и RAM → `pack`; опц. `--push` |
+| `kip passwd` | Смена фразы; purge старого слота из истории |
+| `kip purge <путь>` | Вычистить историю тел узла (нератируемый секрет; design §5.2а) |
+| `kip fsck <путь>` | Сверка таблицы, объектов, слота, инвариантов графа |
+| `kip history <путь>` | Ревизии тела секрета |
+| `kip restore <путь>@<rev>` | Подмена файла в RAM из истории; фиксация — `pack`/`fold` |
 
 **Remote** опционален: `git remote add/remove` вручную. Push — `git push` или
-`vault sync --push`. Pull — только в `unfold` и `sync`.
+`kip sync --push`. Pull — только в `unfold` и `sync`.
 
 **За рамками MVP:** `rotate-vk` и синхронизация эпох между устройствами
 (implementation §2.6); FUSE; TUI конфликтов; chaff по умолчанию.
@@ -141,9 +141,9 @@ RAM-дерево — **вне** репозитория (tmpfs), например
 
 | Действие | Что происходит |
 |----------|----------------|
-| **`vault fold`** | `pack` + убрать RAM; **секреты в git не трогаются** |
+| **`kip fold`** | `pack` + убрать RAM; **секреты в git не трогаются** |
 | **`rm` в RAM + `pack`/`fold`** | Узел удалён из актуального состояния; **история тел сохраняется** — восстановимо через `history`/`restore` |
-| **`vault purge <путь>`** | Необратимо вычищает историю тел узла (явная команда, не флаг к `rm`) |
+| **`kip purge <путь>`** | Необратимо вычищает историю тел узла (явная команда, не флаг к `rm`) |
 
 `fold` — «сохранил и спрятал вид», не «стёр vault».
 
@@ -160,8 +160,8 @@ Vault работает **без remote** (`git bundle` для второй ко�
 
 Источники (по приоритету для автоматизации):
 
-1. **Файл** — `VAULT_PASSPHRASE_FILE`; права `0600`.
-2. **Переменная** `VAULT_PASSPHRASE` — осторожно (видно в `ps`).
+1. **Файл** — `KIP_VAULT_PASSPHRASE_FILE`; права `0600`.
+2. **Переменная** `KIP_VAULT_PASSPHRASE` — осторожно (видно в `ps`).
 3. **Интерактивный ввод**.
 4. **gpg-agent** — фраза и vault key (VK) на TTL агента; не OS-keychain.
 
@@ -208,46 +208,46 @@ Vault работает **без remote** (`git bundle` для второй ко�
 ### 7.1. Первая настройка
 
 ```bash
-vault init ~/secrets-vault
+kip init ~/secrets-vault
 cd ~/secrets-vault && git remote add origin …   # опционально
-vault unfold ~/secrets-vault
+kip unfold ~/secrets-vault
 cd /run/vault/…
 ```
 
 ### 7.2. Одна машина
 
 ```bash
-vault unfold ~/secrets-vault
+kip unfold ~/secrets-vault
 cd /run/vault/…
 # правки в RAM
-vault pack
+kip pack
 git push                          # редко
-vault fold
+kip fold
 ```
 
 ### 7.3. Второе устройство
 
 ```bash
 git clone … ~/secrets-vault
-vault unfold ~/secrets-vault
+kip unfold ~/secrets-vault
 ```
 
 ### 7.4. История и откат
 
 ```bash
-vault history keys/api.key
-vault restore keys/api.key@abc1234
-vault pack
+kip history keys/api.key
+kip restore keys/api.key@abc1234
+kip pack
 ```
 
 `rm` + `pack` удаляет узел из **актуального** состояния, но история тел **остаётся**.
-`vault purge keys/old.key` — когда историю надо уничтожить навсегда.
+`kip purge keys/old.key` — когда историю надо уничтожить навсегда.
 
 ### 7.5. Компрометация
 
-«Утекла фраза, слепок ещё нет» → `vault passwd` (purge + force-push).
+«Утекла фраза, слепок ещё нет» → `kip passwd` (purge + force-push).
 
-«Утекла пара слепок + фраза» → `vault rotate-vk`, затем §6.4; секреты — заменить у
+«Утекла пара слепок + фраза» → `kip rotate-vk`, затем §6.4; секреты — заменить у
 эмитентов.
 
 ### 7.6. Конфликты
