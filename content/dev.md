@@ -46,7 +46,7 @@ secrets-vault/
 ```
 
 **Правило зависимостей:** `vault-domain` не зависит ни от чего, кроме `vault-ports` и
-stdlib/serde (только для сериализации меты в типах — либо вынести `MetaV1` в `vault-ports`).
+stdlib/serde (только для сериализации меты в типах — либо вынести `Meta` в `vault-ports`).
 
 ```
 vault-cli → vault-runtime → vault-domain, vault-store, vault-git, vault-crypto
@@ -58,15 +58,23 @@ vault-git, vault-crypto, vault-store → vault-ports
 
 ## 3. Порты (`vault-ports`)
 
-Имена и сигнатуры — контракт; реализация в адаптерах.
+Имена и сигнатуры — контракт; реализация в адаптерах. **Типы id / меты / таблицы —
+как в `domain.rs`** (не `Uuid`-newtype из старых черновиков). Полные порты
+`HistoryPort` / `PackerPort` / `WorkTreePort` / `TablePersistence` — там же; §3.2–3.5 —
+упрощённый контур имён для MVP (`BlobStore`, `Crypto`, `GitHistory`, `VaultState`),
+без расхождения по форме идентификаторов.
 
 ### 3.1. Идентификаторы
 
+Канон — [`domain.rs`](https://github.com/skepsik/kip.design/blob/master/domain.rs): opaque-имя в россыпи; сорт из имени **не** выводится.
+
 ```rust
-// Случайные, не инкремент. Display/FromStr для путей в корне repo.
-pub struct NodeId(pub Uuid);      // мета: имя файла = NodeId
-pub struct BlobId(pub Uuid);      // тело: отдельный случайный id
-pub struct SentinelRoot;          // корень дерева (без объекта)
+// Случайные, не инкремент. UUID/CSPRNG — только генерация содержимого строки.
+pub struct ObjectName(String);       // имя файла в корне repo (мета, тело, слот, …)
+pub struct NodeId(ObjectName);       // идентичность узла = имя его меты
+pub struct BodyName(ObjectName);     // имя объекта-тела
+pub struct SyncMark(String);         // метка синка (в git — хэш коммита)
+pub enum ParentRef { Root, Node(NodeId) }  // корень — сентинел, не объект
 ```
 
 ### 3.2. `BlobStore`
@@ -75,14 +83,14 @@ pub struct SentinelRoot;          // корень дерева (без объе�
 
 ```rust
 pub trait BlobStore {
-    fn read(&self, name: &str) -> Result<Vec<u8>, StoreError>;
-    fn write_atomic(&self, name: &str, ciphertext: &[u8]) -> Result<(), StoreError>;
-    fn remove(&self, name: &str) -> Result<(), StoreError>;
-    fn list_tracked_names(&self) -> Result<Vec<String>, StoreError>; // для fsck / cold id set
+    fn read(&self, name: &ObjectName) -> Result<CipherBytes, StoreError>;
+    fn write_atomic(&self, name: &ObjectName, ciphertext: &CipherBytes) -> Result<(), StoreError>;
+    fn remove(&self, name: &ObjectName) -> Result<(), StoreError>;
+    fn list_tracked_names(&self) -> Result<Vec<ObjectName>, StoreError>; // fsck / cold id set
 }
 ```
 
-Имена — opaque string (hex/uuid без дефисов). Папки `objects/` нет (ux §2).
+`CipherBytes` — из domain. Имена — opaque string (например hex без дефисов). Папки `objects/` нет (ux §2).
 
 ### 3.3. `Crypto`
 
@@ -102,20 +110,23 @@ pub trait Crypto {
 ### 3.4. `GitHistory`
 
 ```rust
+// Соответствует RawStatus / RawDelta в domain.rs (Appeared/Modified/Disappeared).
 pub enum DeltaStatus { Added, Modified, Deleted }
 
 pub struct BlobDelta {
-    pub path: String,       // имя файла в корне repo
+    pub name: ObjectName,   // имя файла в корне repo
     pub status: DeltaStatus,
 }
 
 pub trait GitHistory {
-    fn diff_since(&self, commit: &str) -> Result<Vec<BlobDelta>, GitError>;
-    fn commit_one(&self, path: &str, message: &str) -> Result<String, GitError>; // new HEAD
-    fn read_blob_at(&self, commit: &str, path: &str) -> Result<Vec<u8>, GitError>;
-    fn head(&self) -> Result<String, GitError>;
+    fn diff_since(&self, mark: &SyncMark) -> Result<Vec<BlobDelta>, GitError>;
+    fn commit_one(&self, name: &ObjectName, message: &str) -> Result<SyncMark, GitError>;
+    fn read_blob_at(&self, rev: &str, name: &ObjectName) -> Result<CipherBytes, GitError>;
+    fn head(&self) -> Result<SyncMark, GitError>;
 }
 ```
+
+Полный порт истории (`HistoryPort`: pull, purge_from_history, publish, MarkVanished) — в `domain.rs`; этот скетч — минимальный контур для MVP-адаптера.
 
 `.gitattributes`: `* binary -diff -merge -text`, `--no-renames` на diff (implementation §2.1).
 
@@ -123,69 +134,85 @@ pub trait GitHistory {
 
 ```rust
 pub trait VaultState {
-    fn sync_marker(&self) -> Result<Option<String>, StateError>;
-    fn set_sync_marker(&self, commit: &str) -> Result<(), StateError>;
-    fn load_table(&self) -> Result<GraphTable, StateError>;
-    fn save_table(&self, table: &GraphTable) -> Result<(), StateError>;
+    fn sync_marker(&self) -> Result<Option<SyncMark>, StateError>;
+    fn set_sync_marker(&self, mark: &SyncMark) -> Result<(), StateError>;
+    fn load_table(&self) -> Result<Table, StateError>;
+    fn save_table(&self, table: &Table) -> Result<(), StateError>;
     fn active_ram_root(&self) -> Result<Option<PathBuf>, StateError>;
     fn set_active_ram_root(&self, path: Option<&Path>) -> Result<(), StateError>;
 }
 ```
 
-`GraphTable` — тип из `vault-domain` (или общий в `vault-ports`).
+`Table` — тип из `vault-domain` (канон `domain.rs`). Межсессионная персистентность таблицы на MVP нет (implementation §1.1); сигнатуры — на будущее / in-memory.
 
 ---
 
 ## 4. Домен (`vault-domain`) — ключевые типы
 
+Сверка с замороженным `domain.rs`. Ниже — сжатый скетч; при сомнении — файл.
+
 ### 4.1. Мета (schema v1)
 
-```rust
-pub const META_SCHEMA_VERSION: u32 = 1;
+Канон — `domain.rs` (`Meta`, `Place`, `NodeBody`, `SchemaVersion`).
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct MetaV1 {
-    pub schema_version: u32,
-    pub name: String,
+```rust
+pub struct SchemaVersion(pub u16);
+pub const CURRENT_SCHEMA: SchemaVersion = SchemaVersion(1);
+
+pub struct Place {
     pub parent: ParentRef,
-    pub body: Option<BlobId>,   // None = каталог
+    pub name: NodeName,       // санитизация на parse (path traversal)
 }
 
-pub enum ParentRef {
-    Root,
-    Node(NodeId),
+pub enum NodeBody {
+    Secret(BodyName),
+    Directory,
+}
+
+pub struct Meta {
+    pub schema: SchemaVersion,
+    pub place: Place,
+    pub body: NodeBody,
 }
 ```
 
-Сериализация: **JSON** (читаемость при отладке, `serde_json`). Миграция ленивая
-(implementation §1.4).
+Сериализация на диске: **JSON** (читаемость при отладке, `serde_json`). Миграция
+ленивая (implementation §1.4). Поле `schema` пишем текущее, читаем все ≤ текущей.
 
-### 4.2. Таблица (горячая + `table.enc`)
+### 4.2. Таблица
+
+Канон — `domain.rs` (`Table`, `Sort`, `NodeEntry`, `PlainHash`). На MVP таблица
+живёт только в RAM вместе с деревом (implementation §1.1); отдельного
+`table.enc` нет.
 
 ```rust
-pub struct GraphTable {
-    pub object_kind: HashMap<String, ObjectKind>, // имя файла в repo → Meta | Body
-    pub nodes: HashMap<NodeId, NodeRow>,
-    // обратный индекс children_by_parent — производный, в памяти
+pub enum Sort {
+    Meta(NodeId),
+    Body(BodyName),
+    Chaff, // критерий распознавания — открытый вопрос до fsck (design §5.4)
 }
 
-pub struct NodeRow {
-    pub meta_path: String,           // имя файла меты (= NodeId)
-    pub parent: ParentRef,
-    pub name: String,
-    pub body: Option<BlobId>,
-    pub plaintext_hash: Option<[u8; 32]>, // для pack без распаковки; None у каталога
+pub struct NodeEntry {
+    pub meta: Meta,
+    pub plain_hash: Option<PlainHash>, // None — тело ещё не разворачивалось
+}
+
+pub struct Table {
+    pub sorts: BTreeMap<ObjectName, Sort>,
+    pub nodes: BTreeMap<NodeId, NodeEntry>,
+    pub children: BTreeMap<ParentRef, Vec<NodeId>>, // производный индекс
+    pub mark: Option<SyncMark>,
 }
 ```
 
 ### 4.3. Операции домена (без I/O)
 
 ```rust
-pub fn apply_remote_delta(table: &mut GraphTable, delta: &[BlobDelta], ...) -> Result<ApplyReport, DomainError>;
-pub fn validate_graph(table: &GraphTable) -> Result<(), MergeValidationError>; // design §4
-pub fn resolve_merge_anomalies(table: &mut GraphTable, history: &dyn HistoryBytes) -> Result<..., ...>;
-pub fn plan_pack(scan: &RamTreeScan, table: &GraphTable) -> PackPlan;  // что писать
-pub fn materialize_paths(table: &GraphTable) -> HashMap<PathBuf, MaterializeOp>; // unfold
+pub fn apply_remote_delta(table: &mut Table, delta: &RawDelta, ...) -> Result<AppliedGraph, DomainError>;
+pub fn validate_graph(applied: AppliedGraph) -> Result<ValidatedState, ...>; // design §4; типы-состояния — domain.rs
+pub fn resolve_merge_anomalies(table: &mut Table, history: &dyn HistoryBytes) -> Result<..., ...>;
+pub fn plan_pack(scan: &RamTreeScan, table: &Table) -> PackPlan;
+pub fn materialize_paths(state: &ValidatedState) -> HashMap<PathBuf, MaterializeOp>;
 ```
 
 `HistoryBytes` — trait для «достать старые байты без re-encrypt» (implementation §1.2).
@@ -235,8 +262,8 @@ git как есть). Меньше FFI-поверхности для непро�
 
 Чеклист; трекер не обязателен.
 
-- [ ] **P1** Workspace, `vault-ports`, `MetaV1`, пустой `vault-domain`
-- [ ] **P2** `GraphTable`, apply delta (2 pass), `validate_graph`, merge rules — **in-memory fake store**
+- [ ] **P1** Workspace, `vault-ports`, типы/`Meta` по `domain.rs`, пустой `vault-domain`
+- [ ] **P2** `Table`, apply delta (2 pass), `validate_graph`, merge rules — **in-memory fake store**
 - [ ] **P2** Property-тест сходимости (главный критерий готовности домена)
 - [ ] **P2** Счётчик распаковок в fake crypto — регресс move-dir O(1)
 - [ ] **P3** `vault-store` + `vault-git` на tempfile-репозитории; повтор property-теста
