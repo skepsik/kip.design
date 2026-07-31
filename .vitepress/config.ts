@@ -40,7 +40,6 @@ export default defineConfig({
           { text: "Сводный дизайн", link: "/design" },
           { text: "К реализации", link: "/implementation" },
           { text: "UX", link: "/ux" },
-          { text: "Dev (Rust)", link: "/dev" },
         ],
       },
     ],

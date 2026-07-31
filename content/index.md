@@ -5,8 +5,9 @@
 | Страница | Тема |
 | -------- | ---- |
 | [design](./design.md) | Сводный дизайн: домен, инфраструктура, инварианты |
-| [implementation](./implementation.md) | От дизайна к реализации: решения, адаптеры, порядок работ |
+| [implementation](./implementation.md) | От дизайна к реализации: решения, адаптеры, workspace, порядок работ |
 | [ux](./ux.md) | Пользовательский опыт: CLI, разворот/свёртка, ментальная модель |
-| [dev](./dev.md) | Скелет реализации (Rust): workspace, crate layout, фазы |
+
+Порты и типы — [`domain.rs`](https://github.com/skepsik/kip.design/blob/master/domain.rs).
 
 **Репозиторий:** `kip.design` · URL: `/kip/wiki/`
