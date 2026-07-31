@@ -363,6 +363,8 @@ pub trait PackerPort {
 pub struct Passphrase(pub String);
 
 /// Порт рабочего дерева (материализация/скан; Р 1.1, 1.3, 2.4).
+/// Дисковый адаптер сам держит BlobStore для чтения ciphertext при materialize;
+/// в эти методы store не входит.
 pub trait WorkTreePort {
     fn materialize(&mut self, state: &ValidatedState, packer: &dyn PackerPort) -> Result<(), PortError>;
     /// Скан при свёртке: правки и переезды — по PlainHash (Р 1.3),

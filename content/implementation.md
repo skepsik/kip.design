@@ -256,7 +256,12 @@ vault'ов (пока пользователь не запустил `rotate-vk`)
 | `sync` | pull + apply + `pack` + optional publish/push |
 
 Упаковка и коммиты **неделимы** внутри `pack` (ux §5.1). Имена методов — как в
-`domain.rs` (`PackerPort`, `HistoryPort`); CLI-имена — ux.
+`domain.rs` (`PackerPort`, `HistoryPort`, `WorkTreePort`); CLI-имена — ux.
+
+Дисковый адаптер дерева (`DiskWorkTree` в runtime): держит **`BlobStore`** для чтения
+шифротекста при `materialize`; в сигнатуру `WorkTreePort::materialize` store **не**
+входит (только `ValidatedState` + `PackerPort`, как в `domain.rs`). Тип адаптера —
+generic по store: `DiskWorkTree<S: BlobStore>`, `open(ram_root, store)`.
 
 ---
 
