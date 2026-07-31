@@ -262,8 +262,25 @@ vault'ов (пока пользователь не запустил `rotate-vk`)
 | `fold` | `pack` + teardown дерева/таблицы (1.1) |
 | `sync` | pull + apply + `pack` + optional publish/push |
 
-Упаковка и коммиты **неделимы** внутри `pack` (ux §5.1). Имена методов — как в
-`domain.rs` (`PackerPort`, `HistoryPort`, `WorkTreePort`); CLI-имена — ux.
+Упаковка и коммиты **неделимы** внутри `pack` (ux §5.1). Имена методов портов — как в
+`domain.rs` (`PackerPort`, `HistoryPort`, `WorkTreePort`); CLI-имена команд — ux.
+
+**Процессы CLI:** `unfold` / `pack` / `fold` — отдельные вызовы бинаря. Таблица сессии
+между процессами не персистится. После `unfold` путь RAM пишется в `.vault/`
+(`active-root`). Поздний `pack` / `fold` поднимает runtime через
+`VaultSession::resume(repo, passphrase)`: читает `active-root`, не перезаписывает
+RAM, заново строит таблицу из объектов репо и baseline-хэши из расшифрованных тел —
+чтобы `scan` видел локальные правки. Первичный разворот — `VaultSession::unlock` +
+`unfold` (не `resume`).
+
+**Карта CLI → runtime** (`vault-cli` → `vault-runtime`; не домен):
+
+| `kip` (ux) | CLI (`vault-cli`) | Runtime |
+| ---------- | ----------------- | ------- |
+| `init <path>` | `init_vault_at` | `prepare_vault_repo` → passphrase → `seal_new_vault` (§2.4) |
+| `unfold <path>` | `unfold_vault_at` | `unlock` + `unfold` (+ выбор RAM-root, warn свопа) |
+| `pack` | `pack_vault_at` | `resume` + `pack` |
+| `fold` | `fold_vault_at` | `resume` + `fold` |
 
 Дисковый адаптер дерева (`DiskWorkTree` в runtime): держит **`BlobStore`** для чтения
 шифротекста при `materialize`; в сигнатуру `WorkTreePort::materialize` store **не**
