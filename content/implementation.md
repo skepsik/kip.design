@@ -214,6 +214,12 @@
 `GpgPacker::init` + коммиты `vault-id` и слота). Фразу не читать до успешного
 prepare — иначе отказ по пути произойдёт после ввода секрета.
 
+**`fsck` (MVP, дымовой):** unlock по фразе (успех = слот ок) + сверка загруженного
+состояния store: `vault-id`, согласованность tracked-имён / мета↔тело, читаемость
+тел. **Без** материализации RAM-дерева. Отчёт — `FsckReport`: `problems` (ошибки;
+непустой → ненулевой exit CLI) и `notes` (в т.ч. сверка слота local↔remote
+пропущена без origin). Самопочинка remote-слота — вне MVP (`§2.5` / design §5.3).
+
 ### 2.5 Бюджеты сложности мелочей
 
 Строчка в дизайне не равна строчке в коде; для перечисленного ниже бюджет — потолок,
@@ -281,6 +287,7 @@ RAM, заново строит таблицу из объектов репо и 
 | `unfold <path>` | `unfold_vault_at` | `unlock` + `unfold` (+ выбор RAM-root, warn свопа) |
 | `pack` | `pack_vault_at` | `resume` + `pack` |
 | `fold` | `fold_vault_at` | `resume` + `fold` |
+| `fsck <path>` | `fsck_vault_at` | `fsck_vault` → `FsckReport` (§2.4; без materialize RAM) |
 
 Дисковый адаптер дерева (`DiskWorkTree` в runtime): держит **`BlobStore`** для чтения
 шифротекста при `materialize`; в сигнатуру `WorkTreePort::materialize` store **не**
