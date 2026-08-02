@@ -289,6 +289,20 @@ RAM, заново строит таблицу из объектов репо и 
 | `fold` | `fold_vault_at` | `resume` + `fold` |
 | `fsck <path>` | `fsck_vault_at` | `fsck_vault` → `FsckReport` (§2.4; без materialize RAM) |
 
+**Ошибки runtime / CLI** (не домен):
+
+- `RuntimeError` (`vault-runtime`) — типизирован по источникам: `Git` / `Store` /
+  `State` / `Packer` / `WorkTree` / `Data` / `Io` (`#[from]`), плюс протокольные
+  варианты сессии/пути (`NotUnfolded`, `AlreadyUnfolded`, `ActiveRootMissing`,
+  `PathIsFile`, `PathNotEmpty`, `GitRepoExists`). Узкий fallback `Message` — для
+  subprocess-status, serde и внутренних инвариантов графа, которые не вынесены в
+  отдельный variant.
+- CLI: `InitError` / `FsckError` несут `Passphrase` и `Runtime(RuntimeError)`;
+  `LifecycleError` — `Passphrase`, `Runtime { command, source }`, `Io { command, source }`
+  (префикс команды в сообщении). Голый `String` как единственный канал ошибок с
+  нижних слоёв не используется.
+- `PassphraseError` — см. ux §6.1. Бинарь мапит ошибки в `Display` → ненулевой exit.
+
 Дисковый адаптер дерева (`DiskWorkTree` в runtime): держит **`BlobStore`** для чтения
 шифротекста при `materialize`; в сигнатуру `WorkTreePort::materialize` store **не**
 входит (только `ValidatedState` + `PackerPort`, как в `domain.rs`). Тип адаптера —
