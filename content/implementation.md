@@ -263,13 +263,19 @@ vault'ов (пока пользователь не запустил `rotate-vk`)
 
 | UX-команда | Runtime |
 | ---------- | ------- |
-| `unfold` | pull (no-op без origin) → дельта → два прохода → decrypt → materialize → метка |
+| `unfold` | pull (no-op без origin) → при расхождении с remote — object-wise 3-way merge → дельта / два прохода → decrypt → materialize (в т.ч. conflict copies) → метка |
 | `pack` | scan → `plan_pack` → seal → запись блобов + `HistoryPort::commit` × N → update table |
 | `fold` | `pack` + teardown дерева/таблицы (1.1) |
 | `sync` | pull + apply + `pack` + optional publish/push |
 
 Упаковка и коммиты **неделимы** внутри `pack` (ux §5.1). Имена методов портов — как в
 `domain.rs` (`PackerPort`, `HistoryPort`, `WorkTreePort`); CLI-имена команд — ux.
+
+**Merge при `unfold`:** если remote ahead/расходится с локальным sync-маркером —
+object-wise 3-way merge шифроблобов (не textual git-merge). Параллельная правка тела
+→ `PresentedConflict` в validate/materialize: победитель на исходном месте, копия
+`имя.conflict-<суффикс>` с **новым** `kNNN` (implementation §1.2 / design §4). Без
+origin merge не вызывается. Persist merge в store — после успешного validate.
 
 **Процессы CLI:** `unfold` / `pack` / `fold` — отдельные вызовы бинаря. Таблица сессии
 между процессами не персистится. После `unfold` путь RAM пишется в `.vault/`
