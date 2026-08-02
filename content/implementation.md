@@ -268,6 +268,7 @@ vault'ов (пока пользователь не запустил `rotate-vk`)
 | `fold` | `pack` + teardown дерева/таблицы (1.1) |
 | `sync` | pull + apply + `pack` + optional publish/push |
 | `passwd` | unlock → `change_passphrase` (новый → верификация → удаление → purge) → `commit_one` нового слота; без RAM / unfold / resume; при remote — warn про ручной `git push --force` |
+| `purge <path>` | `resume` → preflight (`ensure_purgeable`) → confirm (CLI) → `purge` → `purge_from_history` по телам умершего узла; живой секрет в таблице — отказ до confirm |
 
 Упаковка и коммиты **неделимы** внутри `pack` (ux §5.1). Имена методов портов — как в
 `domain.rs` (`PackerPort`, `HistoryPort`, `WorkTreePort`); CLI-имена команд — ux.
@@ -279,9 +280,9 @@ object-wise 3-way merge шифроблобов (не textual git-merge). Пар�
 origin merge не вызывается. Persist merge в store — после успешного validate.
 
 **Процессы CLI:** `unfold` / `pack` / `fold` / `history` / `restore` / `sync` /
-`passwd` — отдельные вызовы бинаря. Таблица сессии между процессами не персистится.
+`passwd` / `purge` — отдельные вызовы бинаря. Таблица сессии между процессами не персистится.
 После `unfold` путь RAM пишется в `.vault/` (`active-root`). Поздний `pack` /
-`fold` / `history` / `restore` поднимают runtime через
+`fold` / `history` / `restore` / `purge` поднимают runtime через
 `VaultSession::resume(repo, passphrase)`: читает `active-root`, не перезаписывает
 RAM, заново строит таблицу из объектов репо и baseline-хэши из расшифрованных тел —
 чтобы `scan` видел локальные правки. Первичный разворот — `VaultSession::unlock` +
@@ -303,6 +304,13 @@ remote — тот же путь, что в `unfold` (kip#28), без второ�
 remote — предупреждение про ручной `git push --force`; force-push kip не делает.
 Обрыв цепочки оставляет хотя бы один рабочий слот.
 
+**`purge`:** `VaultSession::ensure_purgeable(path)` — pub preflight: резолв пути
+(те же классы, что history) и отказ, если секрет ещё **жив** в актуальной таблице
+(сначала `rm` в RAM + `pack`). CLI вызывает preflight **до** interactive confirm.
+`VaultSession::purge(path)` — снова preflight, затем `HistoryPort::purge_from_history`
+по телам умершего узла; `rm`+`pack` сами историю не чистят. Без `--yes` — confirm в
+CLI; отказ → `PurgeError::Declined` (история не трогается).
+
 **Карта CLI → runtime** (`vault-cli` → `vault-runtime`; не домен):
 
 | `kip` (ux) | CLI (`vault-cli`) | Runtime |
@@ -316,6 +324,7 @@ remote — предупреждение про ручной `git push --force`; 
 | `restore <path>@<rev>` | `restore_vault_at` | `resume` + `restore` (байты из истории, без reseal) |
 | `sync` | `sync_vault_at` | свёрнут: `unlock`+`unfold` → `sync`; развёрнут: `resume` → `sync`; `SyncOptions { push }` |
 | `passwd` | `passwd_vault_at` | `passwd_vault` (old/new снаружи CLI; без RAM / unfold / resume) |
+| `purge <path>` | `purge_vault_at` | `resume` → `ensure_purgeable` → (confirm в CLI) → `purge` → `purge_from_history`; `PurgeOptions { yes }` |
 
 **Ошибки runtime / CLI** (не домен):
 
@@ -331,8 +340,9 @@ remote — предупреждение про ручной `git push --force`; 
   (префикс команды в сообщении); `HistoryError` — Passphrase / Runtime (и отказ
   формата цели restore); `SyncError` — Passphrase / Runtime / Io; `PasswdError` —
   Passphrase / Runtime и отказы новой фразы (empty / same-as-old / mismatch / env /
-  interactive). Голый `String` как единственный канал ошибок с нижних слоёв не
-  используется.
+  interactive); `PurgeError` — Passphrase / Runtime / Io (confirm) и
+  `Declined` (отказ interactive confirm без `--yes`). Голый `String` как единственный
+  канал ошибок с нижних слоёв не используется.
 - `PassphraseError` — см. ux §6.1. Бинарь мапит ошибки в `Display` → ненулевой exit.
 
 Дисковый адаптер дерева (`DiskWorkTree` в runtime): держит **`BlobStore`** для чтения
