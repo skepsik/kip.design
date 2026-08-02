@@ -267,6 +267,7 @@ vault'ов (пока пользователь не запустил `rotate-vk`)
 | `pack` | scan → `plan_pack` → seal → запись блобов + `HistoryPort::commit` × N → update table |
 | `fold` | `pack` + teardown дерева/таблицы (1.1) |
 | `sync` | pull + apply + `pack` + optional publish/push |
+| `passwd` | unlock → `change_passphrase` (новый → верификация → удаление → purge) → `commit_one` нового слота; без RAM / unfold / resume; при remote — warn про ручной `git push --force` |
 
 Упаковка и коммиты **неделимы** внутри `pack` (ux §5.1). Имена методов портов — как в
 `domain.rs` (`PackerPort`, `HistoryPort`, `WorkTreePort`); CLI-имена команд — ux.
@@ -277,13 +278,14 @@ object-wise 3-way merge шифроблобов (не textual git-merge). Пар�
 `имя.conflict-<суффикс>` с **новым** `kNNN` (implementation §1.2 / design §4). Без
 origin merge не вызывается. Persist merge в store — после успешного validate.
 
-**Процессы CLI:** `unfold` / `pack` / `fold` / `history` / `restore` / `sync` —
-отдельные вызовы бинаря. Таблица сессии между процессами не персистится. После
-`unfold` путь RAM пишется в `.vault/` (`active-root`). Поздний `pack` / `fold` /
-`history` / `restore` поднимают runtime через `VaultSession::resume(repo, passphrase)`:
-читает `active-root`, не перезаписывает RAM, заново строит таблицу из объектов репо и
-baseline-хэши из расшифрованных тел — чтобы `scan` видел локальные правки.
-Первичный разворот — `VaultSession::unlock` + `unfold` (не `resume`).
+**Процессы CLI:** `unfold` / `pack` / `fold` / `history` / `restore` / `sync` /
+`passwd` — отдельные вызовы бинаря. Таблица сессии между процессами не персистится.
+После `unfold` путь RAM пишется в `.vault/` (`active-root`). Поздний `pack` /
+`fold` / `history` / `restore` поднимают runtime через
+`VaultSession::resume(repo, passphrase)`: читает `active-root`, не перезаписывает
+RAM, заново строит таблицу из объектов репо и baseline-хэши из расшифрованных тел —
+чтобы `scan` видел локальные правки. Первичный разворот — `VaultSession::unlock` +
+`unfold` (не `resume`). `passwd` в сессию/RAM не входит — только repo + packer/history.
 
 **`sync`:** `VaultSession::sync(SyncOptions { push })` — после входа в сессию
 (свёрнут: `unlock`+`unfold`; развёрнут: `resume` без повторного полного materialize)
@@ -295,6 +297,11 @@ remote — тот же путь, что в `unfold` (kip#28), без второ�
 и атомарно пишет файл в RAM **без** reseal/записи в store. Фиксация в git — только
 последующим `pack` / `fold`. Путь резолвится по текущей/исторической таблице (в т.ч.
 после move/delete предков); каталоги по пути при restore создаются при необходимости.
+
+**`passwd`:** `passwd_vault(repo, old, new)` — цепочка PackerPort «новый →
+верификация → удаление → purge» (§2.2), затем `commit_one` нового слота. При наличии
+remote — предупреждение про ручной `git push --force`; force-push kip не делает.
+Обрыв цепочки оставляет хотя бы один рабочий слот.
 
 **Карта CLI → runtime** (`vault-cli` → `vault-runtime`; не домен):
 
@@ -308,6 +315,7 @@ remote — тот же путь, что в `unfold` (kip#28), без второ�
 | `history <path>` | `history_vault_at` | `resume` + `history` → `HistoryRevision` |
 | `restore <path>@<rev>` | `restore_vault_at` | `resume` + `restore` (байты из истории, без reseal) |
 | `sync` | `sync_vault_at` | свёрнут: `unlock`+`unfold` → `sync`; развёрнут: `resume` → `sync`; `SyncOptions { push }` |
+| `passwd` | `passwd_vault_at` | `passwd_vault` (old/new снаружи CLI; без RAM / unfold / resume) |
 
 **Ошибки runtime / CLI** (не домен):
 
@@ -321,8 +329,10 @@ remote — тот же путь, что в `unfold` (kip#28), без второ�
 - CLI: `InitError` / `FsckError` несут `Passphrase` и `Runtime(RuntimeError)`;
   `LifecycleError` — `Passphrase`, `Runtime { command, source }`, `Io { command, source }`
   (префикс команды в сообщении); `HistoryError` — Passphrase / Runtime (и отказ
-  формата цели restore); `SyncError` — Passphrase / Runtime / Io. Голый `String`
-  как единственный канал ошибок с нижних слоёв не используется.
+  формата цели restore); `SyncError` — Passphrase / Runtime / Io; `PasswdError` —
+  Passphrase / Runtime и отказы новой фразы (empty / same-as-old / mismatch / env /
+  interactive). Голый `String` как единственный канал ошибок с нижних слоёв не
+  используется.
 - `PassphraseError` — см. ux §6.1. Бинарь мапит ошибки в `Display` → ненулевой exit.
 
 Дисковый адаптер дерева (`DiskWorkTree` в runtime): держит **`BlobStore`** для чтения
