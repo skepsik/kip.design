@@ -277,13 +277,19 @@ object-wise 3-way merge шифроблобов (не textual git-merge). Пар�
 `имя.conflict-<суффикс>` с **новым** `kNNN` (implementation §1.2 / design §4). Без
 origin merge не вызывается. Persist merge в store — после успешного validate.
 
-**Процессы CLI:** `unfold` / `pack` / `fold` — отдельные вызовы бинаря. Таблица сессии
-между процессами не персистится. После `unfold` путь RAM пишется в `.vault/`
-(`active-root`). Поздний `pack` / `fold` поднимает runtime через
-`VaultSession::resume(repo, passphrase)`: читает `active-root`, не перезаписывает
-RAM, заново строит таблицу из объектов репо и baseline-хэши из расшифрованных тел —
-чтобы `scan` видел локальные правки. Первичный разворот — `VaultSession::unlock` +
-`unfold` (не `resume`).
+**Процессы CLI:** `unfold` / `pack` / `fold` / `history` / `restore` — отдельные
+вызовы бинаря. Таблица сессии между процессами не персистится. После `unfold` путь
+RAM пишется в `.vault/` (`active-root`). Поздний `pack` / `fold` / `history` /
+`restore` поднимают runtime через `VaultSession::resume(repo, passphrase)`: читает
+`active-root`, не перезаписывает RAM, заново строит таблицу из объектов репо и
+baseline-хэши из расшифрованных тел — чтобы `scan` видел локальные правки.
+Первичный разворот — `VaultSession::unlock` + `unfold` (не `resume`).
+
+**`history` / `restore`:** `VaultSession::history(path)` → список `HistoryRevision`;
+`VaultSession::restore(path, rev)` читает ciphertext тела из git-истории, открывает
+и атомарно пишет файл в RAM **без** reseal/записи в store. Фиксация в git — только
+последующим `pack` / `fold`. Путь резолвится по текущей/исторической таблице (в т.ч.
+после move/delete предков); каталоги по пути при restore создаются при необходимости.
 
 **Карта CLI → runtime** (`vault-cli` → `vault-runtime`; не домен):
 
@@ -294,19 +300,23 @@ RAM, заново строит таблицу из объектов репо и 
 | `pack` | `pack_vault_at` | `resume` + `pack` |
 | `fold` | `fold_vault_at` | `resume` + `fold` |
 | `fsck <path>` | `fsck_vault_at` | `fsck_vault` → `FsckReport` (§2.4; без materialize RAM) |
+| `history <path>` | `history_vault_at` | `resume` + `history` → `HistoryRevision` |
+| `restore <path>@<rev>` | `restore_vault_at` | `resume` + `restore` (байты из истории, без reseal) |
 
 **Ошибки runtime / CLI** (не домен):
 
 - `RuntimeError` (`vault-runtime`) — типизирован по источникам: `Git` / `Store` /
   `State` / `Packer` / `WorkTree` / `Data` / `Io` (`#[from]`), плюс протокольные
   варианты сессии/пути (`NotUnfolded`, `AlreadyUnfolded`, `ActiveRootMissing`,
-  `PathIsFile`, `PathNotEmpty`, `GitRepoExists`). Узкий fallback `Message` — для
-  subprocess-status, serde и внутренних инвариантов графа, которые не вынесены в
-  отдельный variant.
+  `PathIsFile`, `PathNotEmpty`, `GitRepoExists`) и пути секрета для history/restore
+  (`InvalidSecretPath`, `SecretNotFound`, `SecretIsDirectory`,
+  `SecretRevisionNotFound`). Узкий fallback `Message` — для subprocess-status, serde
+  и внутренних инвариантов графа, которые не вынесены в отдельный variant.
 - CLI: `InitError` / `FsckError` несут `Passphrase` и `Runtime(RuntimeError)`;
   `LifecycleError` — `Passphrase`, `Runtime { command, source }`, `Io { command, source }`
-  (префикс команды в сообщении). Голый `String` как единственный канал ошибок с
-  нижних слоёв не используется.
+  (префикс команды в сообщении); `HistoryError` — Passphrase / Runtime (и отказ
+  формата цели restore). Голый `String` как единственный канал ошибок с нижних
+  слоёв не используется.
 - `PassphraseError` — см. ux §6.1. Бинарь мапит ошибки в `Display` → ненулевой exit.
 
 Дисковый адаптер дерева (`DiskWorkTree` в runtime): держит **`BlobStore`** для чтения
