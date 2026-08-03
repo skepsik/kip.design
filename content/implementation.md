@@ -246,9 +246,11 @@ vault (`open` / `save` / `close` / `sync` / `fsck` / `history` / `restore` /
 Имя и поведение — опора для CLI и соседних модулей; не оставлять «на усмотрение».
 
 **`init`:** подготовка `<path>` (по умолчанию `.`; создать папку при отсутствии;
-отказ если уже `.kip`) → `git init` в `<path>/.kip/vault` → passphrase →
-`seal_new_vault` → папка сразу **открыта** (маркер под `.kip/`). Фразу не читать до
-успешного prepare. Непустой корень с файлами — штатный кейс (файлы = work tree).
+отказ если уже `.kip` — `RuntimeError::VaultAlreadyExists`; отказ если `.git` в
+корне path — `GitRepoExists`) → `git init` в `<path>/.kip/vault` → passphrase →
+`seal_new_vault` → `VaultSession::open_initial` (маркер `opened`; **без** wipe
+work tree). Фразу не читать до успешного prepare. Непустой корень с файлами —
+штатный кейс (файлы = work tree). Отказа `PathNotEmpty` нет.
 
 **`clone <url> [path]`:** как `git clone` в `<dest>/.kip/vault`; локальные маркеры с
 нуля; по умолчанию `open`; `--closed` — оставить свёрнутым.
@@ -357,8 +359,8 @@ Object-wise merge — тот же путь, что при apply после pull 
 | `kip` (ux) | CLI | Runtime |
 | ---------- | --- | ------- |
 | (резолв path) | `resolve_vault_path` | корень vault по ux §2.2; до `*_vault_at` команд по существующему vault |
-| `init [path]` | `init_vault_at` | prepare `.kip/vault` → passphrase → seal → открыт (§2.4) |
-| `open` | `open_vault_at` | unlock + open (work tree = vault path) |
+| `init [path]` | `init_vault_at` | prepare → passphrase → seal → `open_initial` (§2.4) |
+| `open` | `open_vault_at` | unlock + `open` (wipe + materialize; work tree = vault path) |
 | `save` | `save_vault_at` | resume + save (бывш. pack) |
 | `close` / `--discard` | `close_vault_at` | resume + close (default save) / teardown-only |
 | `discard` | `discard_vault_at` | resume + rematerialize from last save |
@@ -374,8 +376,13 @@ Object-wise merge — тот же путь, что при apply после pull 
 **Ошибки runtime / CLI:** типизированные каналы.
 
 - **`RuntimeError`:** `NotOpen` (нет маркера `opened` / нельзя `resume`);
-  `AlreadyOpen` (повторный холодный open при уже открытом). Внешнего
-  `ActiveRootMissing` / RAM-root path в ошибках нет.
+  `AlreadyOpen` (повторный холодный open при уже открытом);
+  `VaultAlreadyExists` (prepare/init при уже имеющемся `.kip`);
+  `GitRepoExists` (`.git` в корне path при prepare). `PathNotEmpty` нет.
+  Внешнего `ActiveRootMissing` / RAM-root path в ошибках нет.
+- **`VaultSession::open_initial`:** первое открытие после seal (init) — как
+  materialize/opened, без cleanup существующих файлов work tree. Обычный
+  `open` — с wipe.
 - **`ResolveVaultError`** (`vault-cli`, `resolve_vault_path`): `NotFound`,
   `StartNotDirectory`, `Io`. Обёртки команд — `LifecycleError::Resolve`,
   `SyncError::Resolve`, `FsckError::Resolve`, `HistoryError::Resolve`,
