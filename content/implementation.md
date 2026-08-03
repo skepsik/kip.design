@@ -222,6 +222,17 @@ work tree = `<vault>` (parent of `.kip`). Materialize/cleanup/scan **не** тр
 `history` / `restore`. Правки секретов — обычные файловые операции в открытом
 дереве (ux §4).
 
+**`resolve_vault_path`:** резолв корня существующего vault (ux §2.2). Вход —
+`Path` старта (явный аргумент CLI или cwd). Обход старта и родителей; находка —
+каталог, у которого есть дочерний каталог `.kip`; возврат — этот каталог (work
+tree / vault path). Нет находки / старт не каталог — типизированный отказ.
+Симлинки: без обязательного полного `canonicalize`. Команды по существующему
+vault (`open` / `save` / `close` / `sync` / `fsck` / `history` / `restore` /
+`passwd` / `rm` / …) опираются на этот резолв. **`init` / `clone`** — нет (path
+назначения свой).
+
+Имя и поведение — опора для CLI и соседних модулей; не оставлять «на усмотрение».
+
 **`init`:** подготовка `<path>` (по умолчанию `.`; создать папку при отсутствии;
 отказ если уже `.kip`) → `git init` в `<path>/.kip/vault` → passphrase →
 `seal_new_vault` → папка сразу **открыта** (маркер под `.kip/`). Фразу не читать до
@@ -315,7 +326,8 @@ remote. Параллельная правка → `PresentedConflict` → confli
 Store = `<vault>/.kip/vault`; work tree = `<vault>`. Маркер открытости — под `.kip/`
 (не абсолютный путь вовне). `resume`: vault открыт → пересобрать таблицу из store +
 baseline-хэши из тел, не перезаписывая дерево без нужды. Холодный `open` —
-`unlock` + materialize. Поиск vault — вверх от cwd по `.kip`.
+`unlock` + materialize. Резолв корня vault — **`resolve_vault_path`** (ux §2.2 /
+§2.4).
 
 **`sync`:** вход в сессию (свёрнут: unlock+open; открыт: resume) → save → pull/merge →
 apply/materialize → save → push только если конфликтов в этом прогоне не было.
@@ -332,6 +344,7 @@ Object-wise merge — тот же путь, что при apply после pull 
 
 | `kip` (ux) | CLI | Runtime |
 | ---------- | --- | ------- |
+| (резолв path) | `resolve_vault_path` | корень vault по ux §2.2; до `*_vault_at` команд по существующему vault |
 | `init [path]` | `init_vault_at` | prepare `.kip/vault` → passphrase → seal → открыт (§2.4) |
 | `open` | `open_vault_at` | unlock + open (work tree = vault path) |
 | `save` | `save_vault_at` | resume + save (бывш. pack) |
