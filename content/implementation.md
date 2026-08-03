@@ -5,7 +5,7 @@
 адаптеров без развилок, раскладка crate’ов и порядок работ. Жанр тот же: решения с
 мотивировкой, а не инструкция.
 
-Снимок до этой редакции layout/CLI: `archive/secrets-vault-implementation-v4.md`.
+Снимок до редакции layout/CLI: `archive/secrets-vault-implementation-v4.md`.
 
 **Канон портов и типов** — [`domain.rs`](https://github.com/skepsik/kip.design/blob/master/domain.rs)
 (`HistoryPort`, `PackerPort`, `WorkTreePort`, `TablePersistence`, …). Здесь нет
@@ -35,8 +35,9 @@ vault рядом с `.kip`; свёрнутое состояние не соде�
 
 **Layout (ux §2):** store root = `<vault>/.kip/vault` (git + россыпь + `vault-id`);
 work tree = `<vault>` (parent of `.kip`). Materialize/cleanup/scan **не** трогают
-`.kip/`. Маркер открытости и `sync-marker` — файлы под `.kip/` рядом с `vault/`
-(вне git). Work tree на обычном диске.
+`.kip/`. Маркер открытости, `sync-marker`, локальный **`.kip/ignore`** — файлы под
+`.kip/` рядом с `vault/` (вне git). Общий **`.kipignore`** — в корне work tree,
+уезжает в store обычным `save`. Work tree на обычном диске.
 
 Гигиена рабочего дерева (и таблицы — судьба общая):
 
@@ -47,6 +48,13 @@ work tree = `<vault>` (parent of `.kip`). Materialize/cleanup/scan **не** тр
 - редакторы оставляют бэкапы/undo — `close` подметает корень vault (не заходя в
   `.kip`), белый список мусора редакторов;
 - VK — только в агенте с TTL, не в OS-keychain.
+- **scan:** фильтр через crate **`ignore`** — `.kipignore` затем `.kip/ignore`
+  (синтаксис gitignore, включая `!`); всегда skip `.kip/`. Не `.gitignore` store-репо.
+
+### Rejected: встроенные app-дефолты ignore
+
+Шаблоны приложений (например `.obsidian/`) в коде не зашивать — только явные
+правила в ignore-файлах (ux §2.1).
 
 ### Rejected: work tree в tmpfs / отдельном пути
 
@@ -209,9 +217,10 @@ work tree = `<vault>` (parent of `.kip`). Materialize/cleanup/scan **не** тр
 
 ### 2.4 CLI-скелет (минимальный контур)
 
-`init` · `open` · `save` · `close` · `clone` · `sync` · `fsck` · `passwd` ·
-`purge <путь>` · `history <путь>` / `restore <путь>@<ревизия>`. Правки секретов —
-обычные файловые операции в открытом дереве (ux §4).
+`init` · `open` · `save` · `close` / `close --discard` · `discard` · `status` ·
+`clone` · `sync` · `fsck` · `passwd` · `rm` / `rm --cached` / `rm --purge` ·
+`history` / `restore`. Правки секретов — обычные файловые операции в открытом
+дереве (ux §4).
 
 **`init`:** подготовка `<path>` (по умолчанию `.`; создать папку при отсутствии;
 отказ если уже `.kip`) → `git init` в `<path>/.kip/vault` → passphrase →
@@ -220,6 +229,22 @@ work tree = `<vault>` (parent of `.kip`). Materialize/cleanup/scan **не** тр
 
 **`clone <url> [path]`:** как `git clone` в `<dest>/.kip/vault`; локальные маркеры с
 нуля; по умолчанию `open`; `--closed` — оставить свёрнутым.
+
+**`status`:** resume → сравнение work tree с baseline последнего save (PlainHash /
+множество путей); вывод для человека; машинно — сам факт dirty (ненулевой exit или
+стабильный код). Без index/staging.
+
+**`discard`:** resume → rematerialize work tree из последнего сохранённого store;
+baseline/table согласованы с store; vault остаётся открыт.
+
+**`close` / `close --discard`:** по умолчанию resume → save → teardown plaintext;
+`--discard` — resume → teardown без save.
+
+**`rm` / `--cached` / `--purge`:** resume → preflight → (для `--purge` — confirm CLI)
+→ изменение актуального графа + при необходимости `purge_from_history` → фиксация в
+store (внутренний save затронутого). Путь — work tree; для `--cached`/`--purge` файл
+на диске не обязателен (актуальный граф + история). После `--purge` при remote —
+warn про `git push --force`. Отдельной команды `purge` нет.
 
 **`fsck` (MVP, дымовой):** unlock по фразе + сверка store в `.kip/vault` (`vault-id`,
 tracked-имена / мета↔тело, читаемость тел). **Без** materialize дерева. Отчёт —
@@ -236,7 +261,7 @@ tracked-имена / мета↔тело, читаемость тел). **Без
 - **Проверка слота при unlock** — ноль дополнительного кода: успех развёртывания VK и
   есть проверка. Сверка копий — только в `fsck`, и только как сравнение байтов двух
   объектов с заменой битого небитым.
-- **`purge`** — обёртка над `purge_from_history` порта, который уже оплачен
+- **`rm --purge`** — обёртка над `purge_from_history` порта, который уже оплачен
   `passwd`-ом, плюс подтверждающий диалог. Никакой собственной механики истории.
 
 ### 2.6 Следующие фичи упаковщика (после MVP)
@@ -269,12 +294,14 @@ vault'ов (пока пользователь не запустил `rotate-vk`)
 | UX-команда | Runtime |
 | ---------- | ------- |
 | `open` | (опц. pull при необходимости — см. sync) дельта / два прохода → decrypt → materialize **в папку vault** → метка; work tree = parent of `.kip` |
-| `save` | scan → `plan_pack` → seal → запись блобов + `HistoryPort::commit` × N → update table |
-| `close` | `save` + teardown plaintext с корня / таблицы (1.1); `.kip/` не трогать как store |
+| `save` | scan (ignore-фильтр) → `plan_pack` → seal → запись блобов + `HistoryPort::commit` × N → update table |
+| `close` | по умолчанию `save` + teardown plaintext с корня / таблицы (1.1); `--discard` — teardown без save; `.kip/` не трогать как store |
+| `discard` | resume → rematerialize из последнего save; остаётся открыт |
+| `status` | resume → dirty vs baseline последнего save |
 | `clone` | `git clone` → `.kip/vault`; маркеры с нуля; по умолчанию `open`; `--closed` — без open |
 | `sync` | **save → pull → apply → save**; затем **push**, если в прогоне не было `PresentedConflict`; иначе без push, сообщение со списком конфликтных путей, ненулевой exit CLI |
 | `passwd` | unlock → `change_passphrase` → `commit_one` нового слота; без work tree / open / resume; при remote — warn про `git push --force` |
-| `purge <path>` | `resume` → preflight → confirm (CLI) → `purge` → `purge_from_history` |
+| `rm` / `--cached` / `--purge` | resume → preflight → (confirm на `--purge`) → untrack / optional disk delete / `purge_from_history` → фиксация в store |
 
 Упаковка и коммиты **неделимы** внутри `save` (ux §5.1). Имена методов портов — как в
 `domain.rs`; CLI-имена — ux.
@@ -297,8 +324,8 @@ Object-wise merge — тот же путь, что при apply после pull 
 **`history` / `restore`:** путь в work tree; `restore` пишет файл в дерево без reseal;
 фиксация — `save`/`close`.
 
-**`passwd` / `purge`:** как прежде (§2.2 / ux); force-push после passwd — вне обычного
-`sync`.
+**`passwd` / `rm --purge`:** force-push после переписывания истории — вне обычного
+`sync` (§2.2 / ux).
 
 **Карта CLI → runtime** (имена функций — ориентир; при переименовании команд обновить
 вместе с кодом):
@@ -308,21 +335,24 @@ Object-wise merge — тот же путь, что при apply после pull 
 | `init [path]` | `init_vault_at` | prepare `.kip/vault` → passphrase → seal → открыт (§2.4) |
 | `open` | `open_vault_at` | unlock + open (work tree = vault path) |
 | `save` | `save_vault_at` | resume + save (бывш. pack) |
-| `close` | `close_vault_at` | resume + close (бывш. fold) |
+| `close` / `--discard` | `close_vault_at` | resume + close (default save) / teardown-only |
+| `discard` | `discard_vault_at` | resume + rematerialize from last save |
+| `status` | `status_vault_at` | resume + dirty vs baseline |
 | `clone <url> [path]` | `clone_vault_at` | git clone → `.kip/vault` → маркеры; default open |
 | `fsck` | `fsck_vault_at` | `fsck_vault` → `FsckReport` |
 | `history <path>` | `history_vault_at` | resume + history |
 | `restore <path>@<rev>` | `restore_vault_at` | resume + restore |
 | `sync` | `sync_vault_at` | save→pull→apply→save→push\|stop-on-conflict |
 | `passwd` | `passwd_vault_at` | `passwd_vault` |
-| `purge <path>` | `purge_vault_at` | resume → ensure_purgeable → purge |
+| `rm` / `--cached` / `--purge` | `rm_vault_at` | resume → untrack / optional disk / optional purge |
 
 **Ошибки runtime / CLI:** типизированные `RuntimeError` / обёртки CLI как прежде;
 варианты «не открыт» / «уже открыт» вместо внешнего `ActiveRootMissing` на `/tmp`;
 поиск vault / отказ если нет `.kip`. `PassphraseError` — ux §6.1.
 
 Дисковый адаптер дерева: `DiskWorkTree<S: BlobStore>`, `open(work_tree_root, store)`;
-cleanup/materialize/scan пропускают `.kip`.
+cleanup/materialize/scan пропускают `.kip`; scan применяет `.kipignore` + `.kip/ignore`
+через crate `ignore`.
 
 ---
 
@@ -420,8 +450,9 @@ vault-domain → vault-ports (+ serde для меты)
   блоба — заголовок (`pack_version`, `vk_epoch`) + ciphertext, с MVP `vk_epoch=1`;
   `rotate-vk` и синхронизация эпох — после MVP (§2.6); ротация VK — аварийная
   (перешифрование + отсечение истории + `vk_epoch++`);
-  unlock сам есть проверка слота, сверка копий — в `fsck`; `rm` всегда обратим,
-  `purge <путь>` — отдельная команда для нератируемых секретов; бюджеты сложности
+  unlock сам есть проверка слота, сверка копий — в `fsck`; `kip rm` / `--cached`
+  обратимы историей; `kip rm --purge` — явный выжиг для нератируемых секретов;
+  scan — crate `ignore` + `.kipignore` / `.kip/ignore`; бюджеты сложности
   мелочей — 2.5; холодный старт начинается со слота.
 - Порты — `domain.rs`; раскладка crate’ов — §3; порядок работ — §4.
 - Порядок работ: ядро на фейках → property-тест сходимости → git → упаковщик → CLI;

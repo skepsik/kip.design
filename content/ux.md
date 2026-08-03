@@ -4,7 +4,7 @@
 **выглядит и ощущается** для пользователя. Ключи и слот — design §5.2а; адаптеры —
 implementation.
 
-Снимок до этой редакции layout/CLI: `archive/secrets-vault-ux-v4.md`.
+Снимок до редакции layout/CLI: `archive/secrets-vault-ux-v4.md`.
 
 ---
 
@@ -46,10 +46,13 @@ implementation.
 init     →  .kip/vault + слот; папка сразу открыта
 работа   →  обычные операции в папке vault
 save     →  упаковка + локальные коммиты в .kip/vault; файлы остаются
-close    →  save + убрать plaintext с корня
+status   →  dirty относительно последнего save
+discard  →  work tree = последнее сохранённое; vault остаётся открыт
+close    →  save + убрать plaintext с корня; `--discard` — без save
 open     →  снова материализовать секреты в папку
 sync     →  save → pull → apply → save → push (если не было конфликтов)
 clone    →  с remote; по умолчанию сразу open
+rm       →  убрать из актуального (+ опц. диск / выжиг истории)
 ```
 
 **Одна фраза для README:** секреты — обычная папка; шифр и git — в `.kip/vault`.
@@ -62,19 +65,22 @@ clone    →  с remote; по умолчанию сразу open
 ```
 secrets-vault/                 # work tree
   passwords/…
+  .kipignore                   # общий ignore → в store через save
   .kip/
       vault/                   # git-репозиторий = store (non-bare)
           .git/
           vault-id
           a7f3c9e2…            # шифроблоб
           …
+      ignore                   # локальный ignore (не в git store)
       sync-marker              # локальный курсор kip
       opened                   # флаг «открыт»
       config                   # опционально
 ```
 
 **Свёрнуто:** в корне только `.kip/`.  
-**Открыто:** `.kip/` + обычные файлы/каталоги секретов.
+**Открыто:** `.kip/` + обычные файлы/каталоги секретов (+ `.kipignore`, если есть в store
+или создан локально до `save`).
 
 Локальные файлы под `.kip/` (кроме содержимого `vault/`) создаёт kip; в git store не
 входят. Work tree = родитель `.kip` — путь к дереву нигде абсолютным не хранится.
@@ -82,6 +88,29 @@ secrets-vault/                 # work tree
 
 `cp -a` / `mv` всей папки на любую машину сохраняет store, маркеры и plaintext (если
 был открыт).
+
+### 2.1. Ignore
+
+Два слоя (синтаксис как у gitignore, включая `!`):
+
+| Файл | Область | В store |
+|------|---------|---------|
+| **`.kipignore`** | политика vault; корень work tree | да, обычным `save` |
+| **`.kip/ignore`** | только эта машина | нет; переживает `close` |
+
+Наложение: сначала `.kipignore`, затем `.kip/ignore`. При scan всегда пропускается
+`.kip/` (структурно, не через ignore-файл).
+
+Локальный `!` может вернуть путь, который общий слой игнорирует: на этой машине файл
+попадёт в store; после sync/clone на другой машине (только общий ignore) файл
+появится из store — как `git add -f`.
+
+Исключения — только явные правила в этих файлах.
+
+### Rejected: встроенные app-дефолты ignore
+
+Зашитые шаблоны вроде `.obsidian/` — нет. Политика ignore только в `.kipignore` /
+`.kip/ignore`.
 
 ### Rejected: внешний work tree / tmpfs
 
@@ -119,29 +148,39 @@ Work tree во внешнем каталоге (`/tmp/kip-vault/…`, tmpfs, env
 | `kip init [path]` | По умолчанию `.`; `.kip/vault` + seal; сразу открыт. Основной кейс — уже существующая папка с файлами |
 | `kip open` | Материализовать store в корень vault |
 | `kip save` | Скан дерева → шифр + локальные коммиты; файлы остаются |
-| `kip close` | `save` + убрать plaintext с корня |
+| `kip close` | По умолчанию: `save` + убрать plaintext с корня. `--discard` — убрать plaintext без `save` |
+| `kip discard` | Пересобрать work tree из последнего сохранённого; vault остаётся открыт |
+| `kip status` | Work tree ↔ последнее сохранённое; человек и машина (наличие изменений) |
 | `kip clone <url> [path]` | Как `git clone` в `.kip/vault`; маркеры с нуля; по умолчанию `open`; `--closed` — свёрнут |
 | `kip sync` | save → pull → apply → save → push, если не было конфликтных копий; иначе без push + сообщение со списком путей; ненулевой exit |
 | `kip passwd` | Смена фразы; purge старого слота из истории |
-| `kip purge <путь>` | Вычистить историю тел узла (design §5.2а) |
+| `kip rm <путь>` | Удалить с диска + убрать из актуального store (история тел сохраняется) |
+| `kip rm --cached <путь>` | Оставить на диске; убрать из актуального store; история сохраняется |
+| `kip rm --purge <путь>` | Оставить на диске; убрать из актуального + выжечь историю тел (design §5.2а); при remote — force-push |
 | `kip fsck` | Сверка store (без materialize дерева) |
 | `kip history <путь>` | Ревизии тела секрета (путь в work tree) |
 | `kip restore <путь>@<rev>` | Подмена файла в дереве из истории; фиксация — `save`/`close` |
 
 Путь к vault: поиск `.kip` вверх от cwd; явный путь — опционально. Пути
-`history` / `restore` / `purge` — в plaintext-дереве.
+`history` / `restore` / `rm` — в plaintext-дереве; для `--cached` / `--purge` файл
+на диске не обязателен (поиск по актуальному графу и истории). Все варианты `rm`
+сами фиксируют изменение в store. `kip rm` и затем `kip rm --purge` по тому же
+пути — валидно; после `--purge` следующий `save` при живом файле на диске рождает
+новый узел.
 
 **Remote:** `git -C .kip/vault remote …`. Отдача на remote — через `sync` (с push при
-успехе без конфликтов). Голого push в CLI нет.
+успехе без конфликтов). Голого push в CLI нет. Force-push после `passwd` /
+`rm --purge` — отдельная церемония.
 
 **За рамками MVP:** `rotate-vk` и синхронизация эпох (implementation §2.6); FUSE; TUI
 конфликтов; chaff по умолчанию.
 
-Правки секретов — обычные операции в папке vault.
+Правки секретов — обычные операции в папке vault. `rm` в файл-менеджере + `save` —
+эквивалент духа `kip rm` без флагов.
 
 ---
 
-## 5. `save` и `close`
+## 5. `save`, `close`, `sync`
 
 ### 5.1. Упаковка и коммиты — неделимо
 
@@ -152,15 +191,14 @@ Work tree во внешнем каталоге (`/tmp/kip-vault/…`, tmpfs, env
 3. автоматическая серия git-коммитов (один объект — один коммит; порядок: тело →
    мета, родитель → дети — design §5.4).
 
-### 5.2. `close` ≠ удаление секретов
+**`close`:** по умолчанию после фазы сохранения — убрать plaintext с корня vault
+(`.kip/` остаётся). **`close --discard`:** та же уборка plaintext, без фазы
+сохранения (локальные незафиксированные правки не попадают в store).
 
-| Действие | Что происходит |
-|----------|----------------|
-| **`kip close`** | `save` + убрать plaintext; секреты в git не трогаются |
-| **`rm` + `save`/`close`** | Узел убран из актуального состояния; история тел сохраняется |
-| **`kip purge <путь>`** | Необратимо вычищает историю тел |
+**`discard`:** пересобрать work tree из последнего сохранённого store; vault остаётся
+открыт. Эквивалент по смыслу «сбросить dirty к baseline», без teardown.
 
-### 5.3. `sync`
+### 5.2. `sync`
 
 Цепочка: **save → pull → apply → save**, затем **push**, если в этом прогоне не
 появились конфликтные копии. Если появились — push не выполняется; CLI сообщает, что
@@ -255,6 +293,27 @@ kip save
 
 `kip sync` → конфликтные копии в дереве → сообщение без push → правки → `kip sync`.
 
+### 7.7. Убрать из vault / выжечь историю
+
+```bash
+kip rm keys/old.key              # диск + актуальное; история жива
+kip rm --cached notes/draft.md   # только перестать трекать
+kip rm --purge keys/leaked.key   # выжечь историю (+ force-push при remote)
+```
+
+### 7.8. Status
+
+```bash
+kip status                       # dirty относительно последнего save
+```
+
+### 7.9. Сброс локальных правок
+
+```bash
+kip discard                      # дерево = последнее save; остаётся открыт
+kip close --discard              # свернуть без упаковки dirty
+```
+
 ---
 
 ## 8. Безопасность (UX)
@@ -275,14 +334,15 @@ kip save
 - Не коммитит секреты через `git` вручную в store.
 - Не кладёт plaintext внутрь `.kip/vault`.
 - Не использует термин «сессия».
-- Не путает `rm` (обратимо историей) и `purge`.
 
 ---
 
 ## 10. MVP
 
-`init`, `open`, `save`, `close`, `clone`, `sync`, `passwd`, `fsck`, `history`,
-`restore`, `purge`; store в `.kip/vault`; work tree = папка vault; passphrase из файла.
+`init`, `open`, `save`, `close` (`--discard`), `discard`, `status`, `clone`, `sync`,
+`passwd`, `fsck`, `history`, `restore`, `rm` (`--cached` / `--purge`); store в
+`.kip/vault`; work tree = папка vault; passphrase из файла; `.kipignore` /
+`.kip/ignore`.
 
 **За рамками MVP:** `rotate-vk`; синхронизация эпох (§2.6); FUSE; TUI конфликтов;
 chaff по умолчанию.
@@ -292,8 +352,11 @@ chaff по умолчанию.
 ## Приложение. Сводка
 
 - Дерево — папка vault (пока открыто); таблица только в памяти; свёрнуто — `.kip/`.
-- **`save`** = упаковка + локальные коммиты; **`close`** = `save` + убрать plaintext.
+- **`save`** = упаковка + локальные коммиты; **`close`** = `save` + teardown;
+  **`close --discard`** = teardown без save; **`discard`** = rematerialize, открыт.
 - **`sync`** = save → pull → apply → save → push без конфликтов; при конфликтах — без push + список путей.
 - **`clone`** с remote; по умолчанию open; `--closed` опционален.
 - Одна фраза, один слот; объекты шифруются VK.
-- **`rm` обратим** историей; **`purge`** — явная зачистка тел.
+- **Ignore:** `.kipignore` (общий) + `.kip/ignore` (локальный); `.kip/` всегда вне scan.
+- **`kip rm` / `--cached`** обратимы историей; **`kip rm --purge`** — явная зачистка тел.
+- **`status`** — dirty vs последнее сохранённое.
