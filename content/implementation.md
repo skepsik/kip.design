@@ -39,6 +39,18 @@ work tree = `<vault>` (parent of `.kip`). Materialize/cleanup/scan **не** тр
 `.kip/` рядом с `vault/` (вне git). Общий **`.kipignore`** — в корне work tree,
 уезжает в store обычным `save`. Work tree на обычном диске.
 
+Пути (crate `vault-store`): константы `KIP_DIR` (`.kip`), `STORE_DIR` (`vault`),
+`OPENED_MARKER` (`opened`), `SYNC_MARKER` (`sync-marker`); хелперы `kip_dir(vault)`,
+`vault_store_path(vault)`.
+
+**`VaultState` / `DiskVaultState`:** открытость — `is_opened` / `set_opened` (файл
+`opened` под `.kip/`); sync — `sync_marker` / `set_sync_marker`. `DiskVaultState::open`
+(без mkdir) / `ensure` (создаёт `.kip/`); `kip_dir()` / `root()` на адаптере.
+Семантики `active_ram_root` / пути work tree вовне — нет.
+
+**`StateError`:** `Io(std::io::Error)` для дисковых операций state; `Message` — не
+единственный канал новых отказов.
+
 Гигиена рабочего дерева (и таблицы — судьба общая):
 
 - work tree = папка vault; при `close` — уборка plaintext с корня (кроме `.kip/`);
@@ -359,13 +371,22 @@ Object-wise merge — тот же путь, что при apply после pull 
 | `passwd` | `passwd_vault_at` | `passwd_vault` |
 | `rm` / `--cached` / `--purge` | `rm_vault_at` | resume → untrack / optional disk / optional purge |
 
-**Ошибки runtime / CLI:** типизированные `RuntimeError` / обёртки CLI как прежде;
-варианты «не открыт» / «уже открыт» вместо внешнего `ActiveRootMissing` на `/tmp`;
-поиск vault / отказ если нет `.kip`. `PassphraseError` — ux §6.1.
+**Ошибки runtime / CLI:** типизированные каналы.
 
-Дисковый адаптер дерева: `DiskWorkTree<S: BlobStore>`, `open(work_tree_root, store)`;
-cleanup/materialize/scan пропускают `.kip`; scan применяет `.kipignore` + `.kip/ignore`
-через crate `ignore`.
+- **`RuntimeError`:** `NotOpen` (нет маркера `opened` / нельзя `resume`);
+  `AlreadyOpen` (повторный холодный open при уже открытом). Внешнего
+  `ActiveRootMissing` / RAM-root path в ошибках нет.
+- **`ResolveVaultError`** (`vault-cli`, `resolve_vault_path`): `NotFound`,
+  `StartNotDirectory`, `Io`. Обёртки команд — `LifecycleError::Resolve`,
+  `SyncError::Resolve`, `FsckError::Resolve`, `HistoryError::Resolve`,
+  `PasswdError::Resolve`, `PurgeError::Resolve` (`#[from]`).
+- **`StateError`:** `Io` + при необходимости `Message`.
+- `PassphraseError` — ux §6.1.
+
+Дисковый адаптер дерева: `DiskWorkTree<S: BlobStore>`, `open(root, store)` —
+`root` = vault path (work tree); accessor **`root()`** (не `ram_root`).
+cleanup/materialize/scan пропускают `.kip/` структурно. Фильтр `.kipignore` /
+`.kip/ignore` через crate `ignore` — P8.
 
 ---
 
@@ -389,11 +410,13 @@ kip/
 **Зависимости:**
 
 ```
-vault-cli → vault-runtime → vault-domain, vault-store, vault-git, vault-crypto
-vault-runtime → vault-ports
+vault-cli → vault-runtime, vault-store
+vault-runtime → vault-domain, vault-store, vault-git, vault-crypto, vault-ports
 vault-git, vault-crypto, vault-store → vault-ports
 vault-domain → vault-ports (+ serde для меты)
 ```
+
+`vault-cli` → `vault-store` напрямую: константы/`KIP_DIR` для `resolve_vault_path`.
 
 `vault-domain` не зависит от store/git/crypto/runtime/cli и не импортирует
 `std::fs` / `std::process` (gate агентов — в `.cursor/rules/ops.mdc`).
