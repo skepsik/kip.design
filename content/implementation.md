@@ -252,8 +252,13 @@ vault (`open` / `save` / `close` / `sync` / `fsck` / `history` / `restore` /
 work tree). Фразу не читать до успешного prepare. Непустой корень с файлами —
 штатный кейс (файлы = work tree). Отказа `PathNotEmpty` нет.
 
-**`clone <url> [path]`:** как `git clone` в `<dest>/.kip/vault`; локальные маркеры с
-нуля; по умолчанию `open`; `--closed` — оставить свёрнутым.
+**`clone <url> [path]`:** `clone_vault_store` — `git clone` remote **в**
+`<dest>/.kip/vault`; `DiskVaultState::ensure` (локальные маркеры с нуля, не из
+remote). Dest по умолчанию — имя из URL (как у `git clone`). Отказ при уже
+`.kip` / `.git` в корне (`VaultAlreadyExists` / `GitRepoExists`); непустой dest
+без них — ок (как init). Провал `git clone` — убрать `.kip` для retry.
+CLI: `clone_vault_at` + `CloneOptions { closed }` / `CloneError`. По умолчанию —
+passphrase → `open_initial`; `--closed` — без open и без чтения фразы.
 
 **`status`:** resume → сравнение work tree с baseline последнего save (PlainHash /
 множество путей); вывод для человека; машинно — сам факт dirty (ненулевой exit или
@@ -365,7 +370,7 @@ Object-wise merge — тот же путь, что при apply после pull 
 | `close` / `--discard` | `close_vault_at` | resume + close (default save) / teardown-only |
 | `discard` | `discard_vault_at` | resume + rematerialize from last save |
 | `status` | `status_vault_at` | resume + dirty vs baseline |
-| `clone <url> [path]` | `clone_vault_at` | git clone → `.kip/vault` → маркеры; default open |
+| `clone <url> [path]` | `clone_vault_at` + `CloneOptions` | `clone_vault_store` → маркеры; default `open_initial`; `--closed` — без open |
 | `fsck` | `fsck_vault_at` | `fsck_vault` → `FsckReport` |
 | `history <path>` | `history_vault_at` | resume + history |
 | `restore <path>@<rev>` | `restore_vault_at` | resume + restore |
@@ -377,12 +382,14 @@ Object-wise merge — тот же путь, что при apply после pull 
 
 - **`RuntimeError`:** `NotOpen` (нет маркера `opened` / нельзя `resume`);
   `AlreadyOpen` (повторный холодный open при уже открытом);
-  `VaultAlreadyExists` (prepare/init при уже имеющемся `.kip`);
-  `GitRepoExists` (`.git` в корне path при prepare). `PathNotEmpty` нет.
+  `VaultAlreadyExists` (prepare/init/clone при уже имеющемся `.kip`);
+  `GitRepoExists` (`.git` в корне path при prepare/clone). `PathNotEmpty` нет.
   Внешнего `ActiveRootMissing` / RAM-root path в ошибках нет.
-- **`VaultSession::open_initial`:** первое открытие после seal (init) — как
-  materialize/opened, без cleanup существующих файлов work tree. Обычный
-  `open` — с wipe.
+- **`VaultSession::open_initial`:** первое открытие после seal (init) или после
+  clone (default) — materialize/opened без cleanup существующих файлов work tree.
+  Обычный `open` — с wipe.
+- **`clone_vault_store`:** runtime-хелпер clone store в `.kip/vault` (см. §2.4).
+- **`CloneError` / `CloneOptions`:** CLI-канал clone; `closed` = без open.
 - **`ResolveVaultError`** (`vault-cli`, `resolve_vault_path`): `NotFound`,
   `StartNotDirectory`, `Io`. Обёртки команд — `LifecycleError::Resolve`,
   `SyncError::Resolve`, `FsckError::Resolve`, `HistoryError::Resolve`,
