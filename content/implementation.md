@@ -276,11 +276,14 @@ Runtime: **`StatusEntry { path, kind }`**, **`StatusChangeKind`**
 **`VaultSession::close(opts)`** — при `discard: false` resume → save → teardown;
 при `discard: true` — teardown без save.
 
-**`rm` / `--cached` / `--purge`:** resume → preflight → (для `--purge` — confirm CLI)
-→ изменение актуального графа + при необходимости `purge_from_history` → фиксация в
-store (внутренний save затронутого). Путь — work tree; для `--cached`/`--purge` файл
-на диске не обязателен (актуальный граф + история). После `--purge` при remote —
-warn про `git push --force`. Отдельной команды `purge` нет.
+**`rm` / `--cached` / `--purge`:** **`RmMode`:** `Remove` | `Cached` | `Purge`;
+**`RmOptions { mode, yes }`** (`yes` — skip confirm только для `Purge`). CLI:
+**`rm_vault_at` / `RmError`** (в т.ч. `Declined`). Runtime: **`VaultSession::rm`**.
+`Remove` — диск + untrack + save; `Cached` — untrack + save, диск не трогать;
+`Purge` — untrack + `purge_from_history` + save, диск не трогать; confirm без
+`--yes`. Для `Cached`/`Purge` файл на диске не обязателен. После `Purge` при
+remote — warn про `git push --force`. Отдельной команды `kip purge` /
+`purge_vault_at` нет.
 
 **`fsck` (MVP, дымовой):** unlock по фразе + сверка store в `.kip/vault` (`vault-id`,
 tracked-имена / мета↔тело, читаемость тел). **Без** materialize дерева. Отчёт —
@@ -386,7 +389,7 @@ apply после pull (kip#28).
 | `restore <path>@<rev>` | `restore_vault_at` | resume + restore |
 | `sync` | `sync_vault_at` → `SyncResult` | `VaultSession::sync` → save→pull→apply→save→push\|stop-on-conflict; `conflict_paths` |
 | `passwd` | `passwd_vault_at` | `passwd_vault` |
-| `rm` / `--cached` / `--purge` | `rm_vault_at` | resume → untrack / optional disk / optional purge |
+| `rm` / `--cached` / `--purge` | `rm_vault_at` + `RmOptions` / `RmMode` | `VaultSession::rm`; без отдельного `purge` |
 
 **Ошибки runtime / CLI:** типизированные каналы.
 
