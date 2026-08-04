@@ -349,8 +349,12 @@ baseline-хэши из тел, не перезаписывая дерево бе
 §2.4).
 
 **`sync`:** вход в сессию (свёрнут: unlock+open; открыт: resume) → save → pull/merge →
-apply/materialize → save → push только если конфликтов в этом прогоне не было.
-Object-wise merge — тот же путь, что при apply после pull (kip#28).
+apply/materialize → save → push только если конфликтов в этом прогоне не было и
+настроен remote `origin` (иначе push тихо пропускается). Без флага `--push` /
+`SyncOptions`. Результат — **`SyncResult { conflict_paths }`** (пути секретов с
+`PresentedConflict` / conflict copies; пусто = полный sync). CLI: ненулевой exit +
+список путей при непустых `conflict_paths`. Object-wise merge — тот же путь, что при
+apply после pull (kip#28).
 
 **`history` / `restore`:** путь в work tree; `restore` пишет файл в дерево без reseal;
 фиксация — `save`/`close`.
@@ -374,7 +378,7 @@ Object-wise merge — тот же путь, что при apply после pull 
 | `fsck` | `fsck_vault_at` | `fsck_vault` → `FsckReport` |
 | `history <path>` | `history_vault_at` | resume + history |
 | `restore <path>@<rev>` | `restore_vault_at` | resume + restore |
-| `sync` | `sync_vault_at` | save→pull→apply→save→push\|stop-on-conflict |
+| `sync` | `sync_vault_at` → `SyncResult` | `VaultSession::sync` → save→pull→apply→save→push\|stop-on-conflict; `conflict_paths` |
 | `passwd` | `passwd_vault_at` | `passwd_vault` |
 | `rm` / `--cached` / `--purge` | `rm_vault_at` | resume → untrack / optional disk / optional purge |
 
