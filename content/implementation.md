@@ -267,11 +267,14 @@ passphrase → `open_initial`; `--closed` — без open и без чтения
 Runtime: **`StatusEntry { path, kind }`**, **`StatusChangeKind`**
 (`Created`/`Edited`/`Deleted`/`Moved`). Без холодного `open`; без index/staging.
 
-**`discard`:** resume → rematerialize work tree из последнего сохранённого store;
-baseline/table согласованы с store; vault остаётся открыт.
+**`discard`:** resume → **`VaultSession::discard`** → rematerialize work tree из
+последнего сохранённого store; baseline/table согласованы со store; vault остаётся
+открыт (`opened`). CLI: **`discard_vault_at`** / **`DiscardError`**.
 
-**`close` / `close --discard`:** по умолчанию resume → save → teardown plaintext;
-`--discard` — resume → teardown без save.
+**`close` / `close --discard`:** **`CloseOptions { discard: bool }`** (default
+`false`). CLI: **`close_vault_at(start, CloseOptions)`**. Runtime:
+**`VaultSession::close(opts)`** — при `discard: false` resume → save → teardown;
+при `discard: true` — teardown без save.
 
 **`rm` / `--cached` / `--purge`:** resume → preflight → (для `--purge` — confirm CLI)
 → изменение актуального графа + при необходимости `purge_from_history` → фиксация в
@@ -374,8 +377,8 @@ apply после pull (kip#28).
 | `init [path]` | `init_vault_at` | prepare → passphrase → seal → `open_initial` (§2.4) |
 | `open` | `open_vault_at` | unlock + `open` (wipe + materialize; work tree = vault path) |
 | `save` | `save_vault_at` | resume + save (бывш. pack) |
-| `close` / `--discard` | `close_vault_at` | resume + close (default save) / teardown-only |
-| `discard` | `discard_vault_at` | resume + rematerialize from last save |
+| `close` / `--discard` | `close_vault_at` + `CloseOptions` | `VaultSession::close(opts)` — default save+teardown; `discard` — без save |
+| `discard` | `discard_vault_at` | `VaultSession::discard` — rematerialize; остаётся открыт |
 | `status` | `status_vault_at` → `StatusReport` | `VaultSession::status` → `StatusEntry` / dirty vs baseline |
 | `clone <url> [path]` | `clone_vault_at` + `CloneOptions` | `clone_vault_store` → маркеры; default `open_initial`; `--closed` — без open |
 | `fsck` | `fsck_vault_at` | `fsck_vault` → `FsckReport` |
