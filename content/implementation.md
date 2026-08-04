@@ -27,33 +27,40 @@
 проекция и живут вместе: `open` создаёт обоих, `close` убирает обоих; свёрнутое
 состояние оставляет на диске **только store** (`<vault>/.kip/vault`). Пока дерево
 открыто, открытая таблица не добавляет атакующему ничего — плейнтекст лежит в папке
-vault рядом с `.kip`; свёрнутое состояние не содержит ни таблицы, ни plaintext в
+vault рядом с `.kip`; свёрнутое состояние не содержит ни таблицы-кэша, ни plaintext в
 корне vault. Цена — холодный `open`: проход по метам дёшев, материализация тел —
-честная стоимость. Персистентная таблица не заводится вовсе; если когда-либо
-появится — обязана шифроваться, а `PlainHash` в ней быть ключёванным (HMAC под
-ключом из VK).
+честная стоимость.
+
+Пока vault **открыт**, таблица (граф + `PlainHash`) лежит на диске как локальный кэш
+**`<vault>/.kip/table`** (вне store/git; JSON `Table`; запись — temp+rename). CLI —
+отдельные процессы: между вызовами таблица **не** только в RAM процесса — её читают
+с `.kip/table`. На `close` / teardown файл `table` снимается вместе с маркером
+`opened` и plaintext дерева. Кэш **не** переживает свёртку: ветки «шифровать таблицу /
+HMAC на `PlainHash`, раз она на диске после close» нет.
 
 **Layout (ux §2):** store root = `<vault>/.kip/vault` (git + россыпь + `vault-id`);
 work tree = `<vault>` (parent of `.kip`). Materialize/cleanup/scan **не** трогают
-`.kip/`. Маркер открытости, `sync-marker`, локальный **`.kip/ignore`** — файлы под
-`.kip/` рядом с `vault/` (вне git). Общий **`.kipignore`** — в корне work tree,
-уезжает в store обычным `save`. Work tree на обычном диске.
+`.kip/`. Маркер открытости, `sync-marker`, кэш **`table`**, локальный **`.kip/ignore`**
+— файлы под `.kip/` рядом с `vault/` (вне git). Общий **`.kipignore`** — в корне work
+tree, уезжает в store обычным `save`. Work tree на обычном диске.
 
 Пути (crate `vault-store`): константы `KIP_DIR` (`.kip`), `STORE_DIR` (`vault`),
-`OPENED_MARKER` (`opened`), `SYNC_MARKER` (`sync-marker`); хелперы `kip_dir(vault)`,
-`vault_store_path(vault)`.
+`OPENED_MARKER` (`opened`), `SYNC_MARKER` (`sync-marker`), `TABLE_FILE` (`table`);
+хелперы `kip_dir(vault)`, `vault_store_path(vault)`.
 
 **`VaultState` / `DiskVaultState`:** открытость — `is_opened` / `set_opened` (файл
-`opened` под `.kip/`); sync — `sync_marker` / `set_sync_marker`. `DiskVaultState::open`
-(без mkdir) / `ensure` (создаёт `.kip/`); `kip_dir()` / `root()` на адаптере.
-Семантики `active_ram_root` / пути work tree вовне — нет.
+`opened` под `.kip/`); sync — `sync_marker` / `set_sync_marker`; таблица —
+`load_table` / `save_table` (файл `table`). `DiskVaultState::open` (без mkdir) /
+`ensure` (создаёт `.kip/`); `kip_dir()` / `root()` на адаптере. Семантики
+`active_ram_root` / пути work tree вовне — нет.
 
 **`StateError`:** `Io(std::io::Error)` для дисковых операций state; `Message` — не
 единственный канал новых отказов.
 
 Гигиена рабочего дерева (и таблицы — судьба общая):
 
-- work tree = папка vault; при `close` — уборка plaintext с корня (кроме `.kip/`);
+- work tree = папка vault; при `close` — уборка plaintext с корня (кроме `.kip/`) и
+  снос локальных `.kip/opened` + `.kip/table` (store `.kip/vault` не трогать);
   `shred`/перезапись — с оговоркой про CoW/SSD;
 - своп: отключён/зашифрован на уровне машины (проверять и предупреждать) либо
   признаём риск строчкой;
@@ -223,9 +230,10 @@ work tree = `<vault>` (parent of `.kip`). Materialize/cleanup/scan **не** тр
 машинерия дельты и merge chaff не выделяет — §2.2). Для мет в записи таблицы —
 место (`parent`/`name`), ссылка на тело | ∅, опциональный `PlainHash` (детекция
 правок, 1.3); **версия схемы** живёт в мете (`Meta.schema`, 1.4), не отдельным
-полем строки таблицы. Обратный индекс «дети по родителю» — производный, в памяти.
-Персистентность — по решению 1.1. Атомарность записи — `temp + rename`. Сверка имён
-и самопочинка — design §5.3.
+полем строки таблицы. Обратный индекс «дети по родителю» — производный (в рантайме;
+на диск уходит вместе с сериализованной `Table` в `.kip/table`, §1.1).
+Персистентность на время open — §1.1. Атомарность записи — `temp + rename`. Сверка
+имён и самопочинка — design §5.3.
 
 ### 2.4 CLI-скелет (минимальный контур)
 
@@ -260,21 +268,22 @@ remote). Dest по умолчанию — имя из URL (как у `git clone`
 CLI: `clone_vault_at` + `CloneOptions { closed }` / `CloneError`. По умолчанию —
 passphrase → `open_initial`; `--closed` — без open и без чтения фразы.
 
-**`status`:** resume → `VaultSession::status` → `scan` (+ ignore) vs baseline
-последнего save (PlainHash). CLI: **`status_vault_at` → `StatusReport`**
+**`status`:** resume (load `.kip/table`, §2.7) → `VaultSession::status` → `scan`
+(+ ignore) vs baseline последнего save (`PlainHash`); без распаковки тел при живом
+кэше (§1.3). CLI: **`status_vault_at` → `StatusReport`**
 (`dirty: bool`, `paths: Vec<PathBuf>`; человеческий вывод — `Display`, строки
 `create|edit|delete|move <path>`). Машинно: `dirty` → ненулевой exit CLI.
 Runtime: **`StatusEntry { path, kind }`**, **`StatusChangeKind`**
 (`Created`/`Edited`/`Deleted`/`Moved`). Без холодного `open`; без index/staging.
 
 **`discard`:** resume → **`VaultSession::discard`** → rematerialize work tree из
-последнего сохранённого store; baseline/table согласованы со store; vault остаётся
-открыт (`opened`). CLI: **`discard_vault_at`** / **`DiscardError`**.
+последнего сохранённого store; baseline/table согласованы со store → `save_table`;
+vault остаётся открыт (`opened`). CLI: **`discard_vault_at`** / **`DiscardError`**.
 
 **`close` / `close --discard`:** **`CloseOptions { discard: bool }`** (default
 `false`). CLI: **`close_vault_at(start, CloseOptions)`**. Runtime:
 **`VaultSession::close(opts)`** — при `discard: false` resume → save → teardown;
-при `discard: true` — teardown без save.
+при `discard: true` — teardown без save. Teardown: plaintext + `opened` + `table`.
 
 **`rm` / `--cached` / `--purge`:** **`RmMode`:** `Remove` | `Cached` | `Purge`;
 **`RmOptions { mode, yes }`** (`yes` — skip confirm только для `Purge`). CLI:
@@ -332,11 +341,11 @@ vault'ов (пока пользователь не запустил `rotate-vk`)
 
 | UX-команда | Runtime |
 | ---------- | ------- |
-| `open` | (опц. pull при необходимости — см. sync) дельта / два прохода → decrypt → materialize **в папку vault** → метка; work tree = parent of `.kip` |
-| `save` | scan (ignore-фильтр) → `plan_pack` → seal → запись блобов + `HistoryPort::commit` × N → update table |
-| `close` | по умолчанию `save` + teardown plaintext с корня / таблицы (1.1); `--discard` — teardown без save; `.kip/` не трогать как store |
-| `discard` | resume → rematerialize из последнего save; остаётся открыт |
-| `status` | resume → dirty vs baseline последнего save |
+| `open` | (опц. pull при необходимости — см. sync) дельта / два прохода → decrypt → materialize **в папку vault** → метка → **`save_table`**; work tree = parent of `.kip` |
+| `save` | scan (ignore-фильтр) → `plan_pack` → seal → запись блобов + `HistoryPort::commit` × N → update table → **`save_table`** |
+| `close` | по умолчанию `save` + teardown plaintext с корня / `.kip/opened` + `.kip/table` (1.1); `--discard` — teardown без save; store `.kip/vault` не трогать |
+| `discard` | resume → rematerialize из последнего save → `save_table`; остаётся открыт |
+| `status` | resume → dirty vs baseline последнего save (`PlainHash`, без распаковки при живом кэше) |
 | `clone` | `git clone` → `.kip/vault`; маркеры с нуля; по умолчанию `open`; `--closed` — без open |
 | `sync` | **save → pull → apply → save**; затем **push**, если в прогоне не было `PresentedConflict`; иначе без push, сообщение со списком конфликтных путей, ненулевой exit CLI |
 | `passwd` | unlock → `change_passphrase` → `commit_one` нового слота; без work tree / open / resume; при remote — warn про `git push --force` |
@@ -350,12 +359,14 @@ remote. Параллельная правка → `PresentedConflict` → confli
 `имя.conflict-<суффикс>` (implementation §1.2 / design §4). Persist merge в store —
 после успешного validate.
 
-**Процессы CLI:** отдельные вызовы бинаря. Таблица между процессами не персистится.
-Store = `<vault>/.kip/vault`; work tree = `<vault>`. Маркер открытости — под `.kip/`
-(не абсолютный путь вовне). `resume`: vault открыт → пересобрать таблицу из store +
-baseline-хэши из тел, не перезаписывая дерево без нужды. Холодный `open` —
-`unlock` + materialize. Резолв корня vault — **`resolve_vault_path`** (ux §2.2 /
-§2.4).
+**Процессы CLI:** отдельные вызовы бинаря. Пока vault открыт, таблица между
+процессами переживает в **`.kip/table`** (§1.1) — не только в RAM одного процесса.
+Store = `<vault>/.kip/vault`; work tree = `<vault>`. Маркер открытости и кэш таблицы —
+под `.kip/` (вне git). `resume`: vault открыт → `load_table`; нет файла / порча /
+непригодный кэш → полный проход как при холодном старте (меты + baseline) →
+`save_table`; иначе без полной расшифровки тел, дерево не перезаписывать без нужды.
+Холодный `open` — `unlock` + materialize + `save_table`. Резолв корня vault —
+**`resolve_vault_path`** (ux §2.2 / §2.4).
 
 **`sync`:** вход в сессию (свёрнут: unlock+open; открыт: resume) → save → pull/merge →
 apply/materialize → save → push только если конфликтов в этом прогоне не было и
@@ -491,9 +502,10 @@ vault-domain → vault-ports (+ serde для меты)
 
 - Локальная модель угроз: жизненный цикл таблицы = жизненному циклу дерева
   (свёрнутое — на диске только `<vault>/.kip/vault`; work tree = папка vault;
-  при `close` — уборка plaintext; tmpfs/внешний RAM-root и store в `~/.kip/<id>` —
-  Rejected §1.1); своп и TTL агента — явные строчки; VK — только в агенте; FDE — фон
-  (дизайн 5.2в).
+  пока open — кэш `.kip/table` (plaintext ok рядом с деревом); при `close` —
+  уборка plaintext + `opened` + `table`; tmpfs/внешний RAM-root и store в
+  `~/.kip/<id>` — Rejected §1.1); своп и TTL агента — явные строчки; VK — только в
+  агенте; FDE — фон (дизайн 5.2в).
 - Конфликтная копия: новый `kNNN`, детерминированный победитель, исполнитель — кто
   мёржит; все восстановительные операции — старыми байтами из истории, без переупаковок.
 - Детекция правок: `PlainHash` = SHA-256 плейнтекста (считается вне домена) в таблице;

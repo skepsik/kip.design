@@ -385,8 +385,10 @@ pub enum LocalChange {
 /// Порт персистентности таблицы (Р 1.1: жизненный цикл таблицы = жизненному
 /// циклу дерева — таблица существует, пока развёрнуто дерево, и убирается
 /// свёрткой вместе с ним; свёрнутое состояние оставляет на диске только
-/// репозиторий. Отдельной межсессионной персистентности НЕТ; если появится —
-/// шифрованная и с ключёванным PlainHash. Запись — temp+rename, Р 2.3).
+/// репозиторий / store. Пока open — локальный кэш на диске (`.kip/table`, JSON
+/// `Table`, вне git; plaintext ok рядом с деревом). Межсессионного кэша после
+/// close нет; шифрование файла таблицы и HMAC на PlainHash не требуются.
+/// Запись — temp+rename, Р 2.3).
 pub trait TablePersistence {
     fn load(&self, packer: &dyn PackerPort) -> Result<Option<Table>, PortError>;
     fn store(&mut self, table: &Table, packer: &dyn PackerPort) -> Result<(), PortError>;
