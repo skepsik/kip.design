@@ -38,6 +38,18 @@ vault рядом с `.kip`; свёрнутое состояние не соде�
 `opened` и plaintext дерева. Кэш **не** переживает свёртку: ветки «шифровать таблицу /
 HMAC на `PlainHash`, раз она на диске после close» нет.
 
+**Wire `.kip/table`:** JSON объекта `vault_domain::Table` (serde). Поле `children` —
+map родитель → список `NodeId`; ключи map в JSON **строки** (serde_json не принимает
+enum-тег как ключ):
+
+| `ParentRef` | Ключ JSON |
+|-------------|-----------|
+| `Root` | `""` (пустая строка) |
+| `Node(id)` | opaque `NodeId` (`id.as_str()`) |
+
+Прочие поля (`sorts`, `nodes`, `mark`) — обычный serde типов домена. Value-сериализация
+`ParentRef` внутри `Meta.place` этой схемой ключей не задаётся.
+
 **Layout (ux §2):** store root = `<vault>/.kip/vault` (git + россыпь + `vault-id`);
 work tree = `<vault>` (parent of `.kip`). Materialize/cleanup/scan **не** трогают
 `.kip/`. Маркер открытости, `sync-marker`, кэш **`table`**, локальный **`.kip/ignore`**
@@ -231,7 +243,8 @@ tree, уезжает в store обычным `save`. Work tree на обычно
 место (`parent`/`name`), ссылка на тело | ∅, опциональный `PlainHash` (детекция
 правок, 1.3); **версия схемы** живёт в мете (`Meta.schema`, 1.4), не отдельным
 полем строки таблицы. Обратный индекс «дети по родителю» — производный (в рантайме;
-на диск уходит вместе с сериализованной `Table` в `.kip/table`, §1.1).
+на диск уходит вместе с сериализованной `Table` в `.kip/table`, §1.1 — ключи
+`children` в JSON: `""` = Root, иначе opaque NodeId).
 Персистентность на время open — §1.1. Атомарность записи — `temp + rename`. Сверка
 имён и самопочинка — design §5.3.
 
