@@ -260,9 +260,12 @@ remote). Dest по умолчанию — имя из URL (как у `git clone`
 CLI: `clone_vault_at` + `CloneOptions { closed }` / `CloneError`. По умолчанию —
 passphrase → `open_initial`; `--closed` — без open и без чтения фразы.
 
-**`status`:** resume → сравнение work tree с baseline последнего save (PlainHash /
-множество путей); вывод для человека; машинно — сам факт dirty (ненулевой exit или
-стабильный код). Без index/staging.
+**`status`:** resume → `VaultSession::status` → `scan` (+ ignore) vs baseline
+последнего save (PlainHash). CLI: **`status_vault_at` → `StatusReport`**
+(`dirty: bool`, `paths: Vec<PathBuf>`; человеческий вывод — `Display`, строки
+`create|edit|delete|move <path>`). Машинно: `dirty` → ненулевой exit CLI.
+Runtime: **`StatusEntry { path, kind }`**, **`StatusChangeKind`**
+(`Created`/`Edited`/`Deleted`/`Moved`). Без холодного `open`; без index/staging.
 
 **`discard`:** resume → rematerialize work tree из последнего сохранённого store;
 baseline/table согласованы с store; vault остаётся открыт.
@@ -373,7 +376,7 @@ apply после pull (kip#28).
 | `save` | `save_vault_at` | resume + save (бывш. pack) |
 | `close` / `--discard` | `close_vault_at` | resume + close (default save) / teardown-only |
 | `discard` | `discard_vault_at` | resume + rematerialize from last save |
-| `status` | `status_vault_at` | resume + dirty vs baseline |
+| `status` | `status_vault_at` → `StatusReport` | `VaultSession::status` → `StatusEntry` / dirty vs baseline |
 | `clone <url> [path]` | `clone_vault_at` + `CloneOptions` | `clone_vault_store` → маркеры; default `open_initial`; `--closed` — без open |
 | `fsck` | `fsck_vault_at` | `fsck_vault` → `FsckReport` |
 | `history <path>` | `history_vault_at` | resume + history |
