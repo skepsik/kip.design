@@ -300,12 +300,14 @@ vault остаётся открыт (`opened`). CLI: **`discard_vault_at`** / **
 
 **`rm` / `--cached` / `--purge`:** **`RmMode`:** `Remove` | `Cached` | `Purge`;
 **`RmOptions { mode, yes }`** (`yes` — skip confirm только для `Purge`). CLI:
-**`rm_vault_at` / `RmError`** (в т.ч. `Declined`). Runtime: **`VaultSession::rm`**.
-`Remove` — диск + untrack + save; `Cached` — untrack + save, диск не трогать;
-`Purge` — untrack + `purge_from_history` + save, диск не трогать; confirm без
-`--yes`. Для `Cached`/`Purge` файл на диске не обязателен. После `Purge` при
-remote — warn про `git push --force`. Отдельной команды `kip purge` /
-`purge_vault_at` нет.
+**`rm_vault_at` / `RmError`** (в т.ч. `Declined`) → **`Result<bool, _>`**. Runtime:
+**`VaultSession::rm`** → **`Result<bool, _>`** (`Ok(true)` — нужен force-push
+warning после `--purge` при remote). `Remove` — диск + untrack + save; `Cached` —
+untrack + save, диск не трогать; `Purge` — untrack + `purge_from_history` + save,
+диск не трогать; confirm без `--yes`. Для `Cached`/`Purge` файл на диске не
+обязателен. Текст и печать force-push warning — **только CLI** (после снятия
+спиннера команды), не runtime. Отдельной команды `kip purge` / `purge_vault_at`
+нет.
 
 **`fsck` (MVP, дымовой):** unlock по фразе + сверка store в `.kip/vault` (`vault-id`,
 tracked-имена / мета↔тело, читаемость тел). **Без** materialize дерева. Отчёт —
@@ -361,8 +363,8 @@ vault'ов (пока пользователь не запустил `rotate-vk`)
 | `status` | resume → dirty vs baseline последнего save (`PlainHash`, без распаковки при живом кэше) |
 | `clone` | `git clone` → `.kip/vault`; маркеры с нуля; по умолчанию `open`; `--closed` — без open |
 | `sync` | **save → pull → apply → save**; затем **push**, если в прогоне не было `PresentedConflict`; иначе без push, сообщение со списком конфликтных путей, ненулевой exit CLI |
-| `passwd` | unlock → `change_passphrase` → `commit_one` нового слота; без work tree / open / resume; при remote — warn про `git push --force` |
-| `rm` / `--cached` / `--purge` | resume → preflight → (confirm на `--purge`) → untrack / optional disk delete / `purge_from_history` → фиксация в store |
+| `passwd` | unlock → `change_passphrase` → `commit_one` нового слота; без work tree / open / resume; runtime возвращает флаг «нужен force-push warn» при remote |
+| `rm` / `--cached` / `--purge` | resume → preflight → (confirm на `--purge`) → untrack / optional disk delete / `purge_from_history` → фиксация в store; при `--purge`+remote — флаг warn |
 
 Упаковка и коммиты **неделимы** внутри `save` (ux §5.1). Имена методов портов — как в
 `domain.rs`; CLI-имена — ux.
@@ -393,7 +395,9 @@ apply после pull (kip#28).
 фиксация — `save`/`close`.
 
 **`passwd` / `rm --purge`:** force-push после переписывания истории — вне обычного
-`sync` (§2.2 / ux).
+`sync` (§2.2 / ux). Runtime (`passwd_vault` / `VaultSession::rm`) при remote
+возвращает `Ok(true)`; CLI печатает warning на stderr **после** завершения
+команды (после спиннера), не из runtime во время операции.
 
 **Карта CLI → runtime** (имена функций — ориентир; при переименовании команд обновить
 вместе с кодом):
@@ -412,8 +416,8 @@ apply после pull (kip#28).
 | `history <path>` | `history_vault_at` | resume + history |
 | `restore <path>@<rev>` | `restore_vault_at` | resume + restore |
 | `sync` | `sync_vault_at` → `SyncResult` | `VaultSession::sync` → save→pull→apply→save→push\|stop-on-conflict; `conflict_paths` |
-| `passwd` | `passwd_vault_at` | `passwd_vault` |
-| `rm` / `--cached` / `--purge` | `rm_vault_at` + `RmOptions` / `RmMode` | `VaultSession::rm`; без отдельного `purge` |
+| `passwd` | `passwd_vault_at` → `Result<bool, _>` | `passwd_vault` → `Result<bool, _>` (флаг warn) |
+| `rm` / `--cached` / `--purge` | `rm_vault_at` + `RmOptions` / `RmMode` → `Result<bool, _>` | `VaultSession::rm` → `Result<bool, _>`; без отдельного `purge` |
 
 **Ошибки runtime / CLI:** типизированные каналы.
 
