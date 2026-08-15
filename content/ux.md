@@ -242,7 +242,11 @@ store. `kip rm` и затем `kip rm --purge` по тому же пути — �
 1. **Файл** — `KIP_VAULT_PASSPHRASE_FILE`; права `0600`.
 2. **Переменная** `KIP_VAULT_PASSPHRASE`.
 3. **Интерактивный ввод**.
-4. **gpg-agent** — фраза и VK на TTL; не OS-keychain.
+
+Каждый запуск CLI, которому нужен packer: unlock (argon2id) → VK только в RAM
+этого процесса до выхода. Между вызовами при open — plaintext work tree и
+`.kip/table`, не агент ключей. Долгоживущий агент (фраза/VK с TTL между
+процессами) — после MVP (implementation §2.6). Не OS-keychain.
 
 Файл с фразой не в репозитории vault.
 
@@ -345,8 +349,8 @@ kip close --discard              # свернуть без упаковки dirt
 |--------|-----------|
 | Рабочее дерево | папка vault на диске; после `close` — только `.kip/` (store; без plaintext) |
 | Таблица | `.kip/table` на время open; после `close` — нет |
-| VK / агент | gpg-agent с TTL; после `close` — сброс |
-| Своп | Предупреждение при `open` / `clone` с open |
+| VK | В RAM процесса CLI до выхода; каждый вызов с packer — unlock. Агент с TTL — после MVP |
+| Своп | Дисциплина машины (FDE / своп выкл. или зашифрован); kip не проверяет |
 | Модель угроз | Наблюдатель git/remote; локальная машина доверенная |
 
 ---
